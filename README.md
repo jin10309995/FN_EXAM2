@@ -1,93 +1,163 @@
-# FN_EXAM
+# 🎓 升國中數理資優班考題系統
 
+數理資優班甄試線上考試平台 — 支援題庫管理、線上作答、自動評分與成績統計。
 
+## 系統需求
 
-## Getting started
+- [Node.js](https://nodejs.org/) 16 以上版本
+- Windows 作業系統（`setup.bat` / `start.bat` 適用）
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+## 快速開始
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+```bat
+:: 1. 首次安裝（只需執行一次）
+setup.bat
 
-## Add your files
+:: 2. 啟動伺服器
+start.bat
 
-* [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+:: 3. 開啟瀏覽器
+::    http://localhost:3000
+```
+
+`setup.bat` 會自動完成：安裝 npm 套件 → 產生前端頁面 → 初始化資料庫 → 植入範例題目。
+
+## 專案結構
 
 ```
-cd existing_repo
-git remote add origin https://gitlab.ksi.com.tw/chihkai/FN_EXAM.git
-git branch -M main
-git push -uf origin main
+project/
+├── server.js           # Express 後端主程式（API + 靜態檔案服務）
+├── database.js         # SQLite 資料庫初始化與連線
+├── seed.js             # 範例題目植入腳本
+├── generate-public.js  # 自動產生前端 HTML 頁面
+├── exam.db             # SQLite 資料庫檔案
+├── public/             # 前端靜態頁面
+│   ├── index.html      # 首頁入口
+│   ├── exam-list.html  # 考試列表（學生端）
+│   ├── exam.html       # 線上作答（學生端）
+│   ├── result.html     # 個人成績與解析
+│   ├── results.html    # 全班成績查詢
+│   └── admin.html      # 後台管理（教師端）
+├── setup.bat           # 一鍵初始化腳本
+└── start.bat           # 啟動伺服器腳本
 ```
 
-## Integrate with your tools
+## 頁面說明
 
-* [Set up project integrations](https://gitlab.ksi.com.tw/chihkai/FN_EXAM/-/settings/integrations)
+| 頁面 | 角色 | 說明 |
+|------|------|------|
+| `/` | 所有人 | 首頁入口，導覽至各功能 |
+| `/exam-list.html` | 學生 | 選擇已開放的考試 |
+| `/exam.html?id=<ID>` | 學生 | 線上作答（倒數計時、自動評分） |
+| `/result.html?id=<ID>` | 學生 | 查看個人成績與詳細題目解析 |
+| `/results.html` | 教師 | 查詢全班成績排行 |
+| `/admin.html` | 教師 | 題庫管理 / 試卷管理 / 成績統計 |
 
-## Collaborate with your team
+## 題目類型
 
-* [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+| 類型 | 代碼 | 評分方式 |
+|------|------|----------|
+| 選擇題 | `choice` | 自動評分（單選 A/B/C/D） |
+| 填充題 | `fill` | 自動評分（文字比對） |
+| 計算題 | `calculation` | 預留（人工批改） |
 
-## Test and Deploy
+## 科目分類
 
-Use the built-in continuous integration in GitLab.
+| 科目 | 代碼 |
+|------|------|
+| 數學 | MATH |
+| 自然科學 | SCI |
+| 物理 | PHY |
+| 化學 | CHEM |
+| 生物 | BIO |
+| 地球科學 | EARTH |
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+## 難度等級
 
-***
+| 等級 | 說明 |
+|------|------|
+| 1 ★ | 入門 |
+| 2 ★★ | 基礎 |
+| 3 ★★★ | 中級 |
+| 4 ★★★★ | 進階 |
+| 5 ★★★★★ | 競賽級 |
 
-# Editing this README
+## API 一覽
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+### 科目
+```
+GET  /api/subjects                  取得所有科目列表
+```
 
-## Suggestions for a good README
+### 題庫
+```
+GET  /api/questions                 查詢題庫（支援篩選與分頁）
+     ?subject_id=1&type=choice&difficulty=3&search=關鍵字&page=1&limit=20
+GET  /api/questions/random          隨機抽題
+     ?subject_id=1&type=choice&difficulty_min=2&difficulty_max=4&count=10
+GET  /api/questions/:id             取得單筆題目
+POST /api/questions                 新增題目
+PUT  /api/questions/:id             編輯題目
+DELETE /api/questions/:id           刪除題目
+```
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+### 試卷
+```
+GET  /api/exams                     取得所有試卷列表（含題數與總分）
+GET  /api/exams/:id                 取得試卷詳情（含答案，供管理使用）
+GET  /api/exams/:id/take            考生作答用（隱藏答案，僅開放中試卷）
+POST /api/exams                     建立試卷
+PUT  /api/exams/:id                 更新試卷（含狀態切換：draft/active/closed）
+DELETE /api/exams/:id               刪除試卷
+```
 
-## Name
-Choose a self-explaining name for your project.
+### 作答與成績
+```
+POST /api/exams/:id/submit          提交作答，回傳得分與百分比
+GET  /api/exams/:id/submissions     取得此試卷所有考生成績列表
+GET  /api/exams/:id/stats           試卷統計（平均分、最高分、最易錯題 Top 5）
+GET  /api/submissions/:id           取得單筆作答詳情（含每題解析）
+```
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+## 資料庫結構
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+SQLite 資料庫（`exam.db`）包含以下資料表：
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+| 資料表 | 說明 |
+|--------|------|
+| `subjects` | 科目（數學、物理…） |
+| `questions` | 題目（內容、選項、答案、解析、標籤） |
+| `exams` | 試卷（標題、說明、時長、狀態） |
+| `exam_questions` | 試卷題目關聯（排序、配分） |
+| `submissions` | 學生作答紀錄 |
+| `answer_details` | 每題作答明細（對錯、得分） |
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+可用 [DB Browser for SQLite](https://sqlitebrowser.org/) 直接開啟 `exam.db` 查看資料。
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+## 手動執行
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+```bat
+:: 安裝套件
+npm install
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+:: 重新產生前端頁面
+node generate-public.js
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+:: 植入範例題目（數學 + 自然科學共 19 題，並建立一份範例試卷）
+node seed.js
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+:: 啟動伺服器（預設 port 3000）
+node server.js
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+:: 自訂 port
+set PORT=8080 && node server.js
+```
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+## 技術棧
 
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+| 類別 | 技術 |
+|------|------|
+| 後端框架 | [Express.js](https://expressjs.com/) 4.x |
+| 資料庫 | [SQLite](https://www.sqlite.org/) via [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) |
+| 前端樣式 | [Tailwind CSS](https://tailwindcss.com/)（CDN） |
+| 字型 | Noto Sans TC（Google Fonts） |

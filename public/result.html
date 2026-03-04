@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>考試結果 - 數理資優班考題系統</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>body{font-family:'Noto Sans TC',sans-serif;}</style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+<header class="bg-indigo-700 text-white py-4 px-6 shadow">
+  <div class="max-w-4xl mx-auto flex items-center gap-3">
+    <a href="/" class="text-indigo-200 hover:text-white">🏠</a>
+    <span class="text-lg font-bold">考試結果</span>
+  </div>
+</header>
+<main class="max-w-4xl mx-auto px-4 py-8" id="result-container">
+  <div class="text-center py-16 text-gray-500">載入中...</div>
+</main>
+<script>
+const id = new URLSearchParams(location.search).get('id');
+async function loadResult() {
+  const res = await fetch('/api/submissions/' + id);
+  const data = await res.json();
+  const pct = Math.round(data.score / data.total_score * 100);
+  const color = pct >= 80 ? 'text-green-600' : pct >= 60 ? 'text-yellow-600' : 'text-red-600';
+  document.getElementById('result-container').innerHTML = `
+    <div class="bg-white rounded-2xl shadow-lg p-8 mb-6 text-center">
+      <h2 class="text-2xl font-bold text-gray-800 mb-2">${data.student_name} 的成績</h2>
+      <div class="text-7xl font-bold ${color} my-6">${pct}%</div>
+      <p class="text-gray-500">${data.score} / ${data.total_score} 分 &nbsp;·&nbsp; 作答時間: ${data.submitted_at}</p>
+    </div>
+    <div class="space-y-4">
+      ${data.details.map((d,i) => `
+        <div class="bg-white rounded-xl shadow p-5 border-l-4 ${d.is_correct ? 'border-green-400' : 'border-red-400'}">
+          <div class="flex justify-between mb-2">
+            <span class="font-medium text-gray-700">第 ${i+1} 題</span>
+            <span class="${d.is_correct ? 'text-green-600' : 'text-red-600'} font-bold">
+              ${d.is_correct ? '✓ 答對 +'+d.score_earned+'分' : '✗ 答錯'}
+            </span>
+          </div>
+          <p class="text-gray-800 mb-3">${d.content}</p>
+          <div class="text-sm space-y-1">
+            <p>你的答案：<span class="${d.is_correct ? 'text-green-600' : 'text-red-600'} font-medium">${d.given_answer || '（未作答）'}</span></p>
+            ${!d.is_correct ? `<p>正確答案：<span class="text-green-600 font-medium">${d.correct_answer}</span></p>` : ''}
+            ${d.explanation ? `<p class="text-gray-500 mt-2 bg-gray-50 p-2 rounded">💡 ${d.explanation}</p>` : ''}
+          </div>
+        </div>
+      `).join('')}
+    </div>
+    <div class="mt-6 text-center">
+      <a href="/exam-list.html" class="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3 rounded-lg font-medium transition-colors">返回考試列表</a>
+    </div>
+  `;
+}
+loadResult();
+</script>
+</body>
+</html>

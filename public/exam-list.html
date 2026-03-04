@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>選擇考試 - 數理資優班考題系統</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>body{font-family:'Noto Sans TC',sans-serif;}</style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+<header class="bg-indigo-700 text-white py-4 px-6 shadow">
+  <div class="max-w-4xl mx-auto flex items-center gap-3">
+    <a href="/" class="text-indigo-200 hover:text-white">🏠</a>
+    <span class="text-lg font-bold">選擇考試</span>
+  </div>
+</header>
+<main class="max-w-4xl mx-auto px-4 py-8">
+  <div id="exam-list" class="grid gap-4"></div>
+</main>
+<script>
+async function loadExams() {
+  const res = await fetch('/api/exams');
+  const exams = await res.json();
+  const active = exams.filter(e => e.status === 'active');
+  const container = document.getElementById('exam-list');
+  if (!active.length) {
+    container.innerHTML = '<p class="text-center text-gray-500 py-16">目前沒有開放中的考試</p>';
+    return;
+  }
+  container.innerHTML = active.map(e => `
+    <div class="bg-white rounded-xl shadow p-6 flex justify-between items-center">
+      <div>
+        <h3 class="text-lg font-bold text-gray-800">${e.title}</h3>
+        <p class="text-sm text-gray-500 mt-1">${e.description || ''}</p>
+        <div class="flex gap-4 mt-2 text-sm text-gray-600">
+          <span>📋 ${e.question_count} 題</span>
+          <span>⏱ ${e.duration_min} 分鐘</span>
+          <span>💯 滿分 ${e.total_score} 分</span>
+        </div>
+      </div>
+      <a href="/exam.html?id=${e.id}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-lg font-medium transition-colors">開始作答</a>
+    </div>
+  `).join('');
+}
+loadExams();
+</script>
+</body>
+</html>

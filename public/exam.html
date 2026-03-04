@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>考試作答 - 數理資優班考題系統</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" id="MathJax-script" async></script>
+<style>body{font-family:'Noto Sans TC',sans-serif;}</style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+<!-- Registration Modal -->
+<div id="reg-modal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+  <div class="bg-white rounded-2xl p-8 w-full max-w-md mx-4">
+    <h2 class="text-2xl font-bold text-gray-800 mb-6 text-center">填寫考生資料</h2>
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">姓名 <span class="text-red-500">*</span></label>
+        <input id="student-name" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="請輸入真實姓名">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">座號 / 學號</label>
+        <input id="student-id" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="選填">
+      </div>
+    </div>
+    <button onclick="startExam()" class="mt-6 w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-lg font-medium text-lg transition-colors">開始考試</button>
+  </div>
+</div>
+
+<!-- Exam Header -->
+<header class="bg-indigo-700 text-white py-3 px-6 shadow sticky top-0 z-40">
+  <div class="max-w-4xl mx-auto flex justify-between items-center">
+    <div>
+      <span class="font-bold" id="exam-title">載入中...</span>
+      <span class="text-indigo-200 text-sm ml-3" id="progress-text"></span>
+    </div>
+    <div class="flex items-center gap-4">
+      <div id="timer" class="bg-indigo-800 px-4 py-1 rounded-full font-mono text-lg font-bold">--:--</div>
+      <button onclick="confirmSubmit()" class="bg-green-500 hover:bg-green-600 px-4 py-1 rounded-lg font-medium transition-colors">提交作答</button>
+    </div>
+  </div>
+</header>
+
+<main class="max-w-4xl mx-auto px-4 py-6" id="questions-container">
+  <div class="text-center py-16 text-gray-500">載入中...</div>
+</main>
+
+<div class="fixed bottom-0 left-0 right-0 bg-white border-t shadow-lg p-3 z-30">
+  <div class="max-w-4xl mx-auto flex gap-2 flex-wrap justify-center" id="question-nav"></div>
+</div>
+
+<script>
+const params = new URLSearchParams(location.search);
+const examId = params.get('id');
+let examData = null;
+let answers = {};
+let timerInterval = null;
+let timeLeft = 0;
+let studentName = '';
+let studentId = '';
+
+async function loadExam() {
+  const res = await fetch(`/api/exams/${examId}/take`);
+  if (!res.ok) { document.getElementById('questions-container').innerHTML = '<p class="text-center py-16 text-red-500">試卷不存在或尚未開放</p>'; document.getElementById('reg-modal').remove(); return; }
+  examData = await res.json();
+  document.getElementById('exam-title').textContent = examData.title;
+  timeLeft = examData.duration_min * 60;
+}
+
+function startExam() {
+  studentName = document.getElementById('student-name').value.trim();
+  if (!studentName) { alert('請填寫姓名'); return; }
+  studentId = document.getElementById('student-id').value.trim();
+  document.getElementById('reg-modal').remove();
+  renderQuestions();
+  startTimer();
+}
+
+function renderQuestions() {
+  const container = document.getElementById('questions-container');
+  const nav = document.getElementById('question-nav');
+  container.innerHTML = examData.questions.map((q, i) => `
+    <div id="q-${i}" class="bg-white rounded-xl shadow p-6 mb-4">
+      <div class="flex justify-between items-start mb-3">
+        <span class="text-sm font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">第 ${i+1} 題 · ${q.subject_name} · ${q.score}分</span>
+        <span class="text-xs text-gray-400">${'★'.repeat(q.difficulty || 1)}${'☆'.repeat(5-(q.difficulty||1))}</span>
+      </div>
+      <p class="text-gray-800 mb-4 leading-relaxed">${q.content}</p>
+      ${q.type === 'choice' ? renderChoices(q, i) : renderFill(q, i)}
+    </div>
+  `).join('') + '<div class="h-24"></div>';
+
+  nav.innerHTML = examData.questions.map((q,i) => `
+    <button id="nav-${i}" onclick="scrollToQ(${i})" class="w-8 h-8 rounded text-sm font-medium border-2 border-gray-300 text-gray-600 hover:border-indigo-400">${i+1}</button>
+  `).join('');
+  updateProgress();
+}
+
+function renderChoices(q, idx) {
+  return ['A','B','C','D'].map(opt => {
+    const val = q['option_' + opt.toLowerCase()];
+    if (!val) return '';
+    return `<label class="flex items-start gap-3 p-3 rounded-lg border-2 border-transparent hover:border-indigo-200 hover:bg-indigo-50 cursor-pointer mb-2 transition-all">
+      <input type="radio" name="q-${idx}" value="${opt}" onchange="setAnswer(${idx}, '${opt}')" class="mt-0.5 accent-indigo-600">
+      <span class="font-medium text-indigo-700 min-w-4">${opt}.</span>
+      <span class="text-gray-700">${val}</span>
+    </label>`;
+  }).join('');
+}
+
+function renderFill(q, idx) {
+  return `<input type="text" placeholder="請填寫答案" onchange="setAnswer(${idx}, this.value)"
+    class="w-full border-2 border-gray-300 focus:border-indigo-500 rounded-lg px-3 py-2 outline-none transition-colors">`;
+}
+
+function setAnswer(idx, val) {
+  const qid = examData.questions[idx].id;
+  answers[qid] = val;
+  const btn = document.getElementById(`nav-${idx}`);
+  btn.classList.remove('border-gray-300','text-gray-600');
+  btn.classList.add('border-green-400','bg-green-50','text-green-700');
+  updateProgress();
+}
+
+function scrollToQ(idx) { document.getElementById(`q-${idx}`).scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+
+function updateProgress() {
+  const answered = Object.keys(answers).length;
+  document.getElementById('progress-text').textContent = `已作答 ${answered}/${examData.questions.length} 題`;
+}
+
+function startTimer() {
+  timerInterval = setInterval(() => {
+    timeLeft--;
+    const m = Math.floor(timeLeft / 60).toString().padStart(2,'0');
+    const s = (timeLeft % 60).toString().padStart(2,'0');
+    const el = document.getElementById('timer');
+    el.textContent = `${m}:${s}`;
+    if (timeLeft <= 300) el.classList.add('text-yellow-300');
+    if (timeLeft <= 60)  el.classList.replace('text-yellow-300','text-red-300');
+    if (timeLeft <= 0)   { clearInterval(timerInterval); submitAnswers(); }
+  }, 1000);
+}
+
+function confirmSubmit() {
+  if (confirm('確定要提交作答嗎？')) submitAnswers();
+}
+
+async function submitAnswers() {
+  clearInterval(timerInterval);
+  const res = await fetch(`/api/exams/${examId}/submit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ student_name: studentName, student_id: studentId, answers })
+  });
+  const data = await res.json();
+  if (data.submission_id) {
+    location.href = `/result.html?id=${data.submission_id}`;
+  } else {
+    alert('提交失敗：' + (data.error || '未知錯誤'));
+  }
+}
+
+loadExam();
+</script>
+</body>
+</html>

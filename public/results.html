@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>成績查詢 - 數理資優班考題系統</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>body{font-family:'Noto Sans TC',sans-serif;}</style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+<header class="bg-indigo-700 text-white py-4 px-6 shadow">
+  <div class="max-w-4xl mx-auto flex items-center gap-3">
+    <a href="/" class="text-indigo-200 hover:text-white">🏠</a>
+    <span class="text-lg font-bold">成績查詢</span>
+  </div>
+</header>
+<main class="max-w-4xl mx-auto px-4 py-8">
+  <div class="bg-white rounded-xl shadow p-6 mb-6">
+    <h2 class="font-bold text-gray-700 mb-4">查詢考試成績</h2>
+    <div class="flex gap-3">
+      <select id="exam-select" class="flex-1 border border-gray-300 rounded-lg px-3 py-2">
+        <option value="">請選擇試卷</option>
+      </select>
+      <button onclick="loadSubmissions()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-lg transition-colors">查詢</button>
+    </div>
+  </div>
+  <div id="submissions-list"></div>
+</main>
+<script>
+async function init() {
+  const res = await fetch('/api/exams');
+  const exams = await res.json();
+  const sel = document.getElementById('exam-select');
+  exams.forEach(e => {
+    const opt = document.createElement('option');
+    opt.value = e.id; opt.textContent = e.title;
+    sel.appendChild(opt);
+  });
+  const params = new URLSearchParams(location.search);
+  if (params.get('exam_id')) { sel.value = params.get('exam_id'); loadSubmissions(); }
+}
+
+async function loadSubmissions() {
+  const id = document.getElementById('exam-select').value;
+  if (!id) return;
+  const [subsRes, statsRes] = await Promise.all([
+    fetch('/api/exams/' + id + '/submissions'),
+    fetch('/api/exams/' + id + '/stats')
+  ]);
+  const subs  = await subsRes.json();
+  const stats = await statsRes.json();
+  const pctColor = p => p>=80?'text-green-600':p>=60?'text-yellow-600':'text-red-600';
+
+  document.getElementById('submissions-list').innerHTML = `
+    <div class="grid grid-cols-4 gap-4 mb-6">
+      ${[['參加人數',stats.count+'人'],['平均分',+(stats.avg_pct||0).toFixed(1)+'%'],['最高分',+(stats.max_pct||0).toFixed(1)+'%'],['最低分',+(stats.min_pct||0).toFixed(1)+'%']].map(([l,v])=>
+        `<div class="bg-white rounded-xl shadow p-4 text-center"><p class="text-sm text-gray-500">${l}</p><p class="text-2xl font-bold text-indigo-700 mt-1">${v}</p></div>`
+      ).join('')}
+    </div>
+    <div class="bg-white rounded-xl shadow overflow-hidden">
+      <table class="w-full">
+        <thead class="bg-gray-50 text-sm text-gray-500"><tr>
+          <th class="px-4 py-3 text-left">考生姓名</th>
+          <th class="px-4 py-3 text-left">學號</th>
+          <th class="px-4 py-3 text-right">得分</th>
+          <th class="px-4 py-3 text-right">成績</th>
+          <th class="px-4 py-3 text-right">作答時間</th>
+          <th class="px-4 py-3 text-center">詳情</th>
+        </tr></thead>
+        <tbody>
+          ${subs.map(s=>`
+            <tr class="border-b hover:bg-gray-50">
+              <td class="px-4 py-3 font-medium">${s.student_name}</td>
+              <td class="px-4 py-3 text-gray-500">${s.student_id||'-'}</td>
+              <td class="px-4 py-3 text-right">${s.score}/${s.total_score}</td>
+              <td class="px-4 py-3 text-right font-bold ${pctColor(s.percentage)}">${s.percentage}%</td>
+              <td class="px-4 py-3 text-right text-gray-400 text-xs">${s.submitted_at}</td>
+              <td class="px-4 py-3 text-center"><a href="/result.html?id=${s.id}" class="text-indigo-600 hover:text-indigo-800 text-sm">查看</a></td>
+            </tr>
+          `).join('')||'<tr><td colspan="6" class="text-center py-8 text-gray-400">尚無成績紀錄</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+init();
+</script>
+</body>
+</html>
