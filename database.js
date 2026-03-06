@@ -69,15 +69,45 @@ db.exec(`
   );
 `);
 
-// Seed subjects
-const insertSubject = db.prepare(`INSERT OR IGNORE INTO subjects (name, code) VALUES (?, ?)`);
+// Migration: add grade_level column to questions if not exists
+const cols = db.prepare("PRAGMA table_info(questions)").all().map(c => c.name);
+if (!cols.includes('grade_level')) {
+  db.exec(`ALTER TABLE questions ADD COLUMN grade_level TEXT NOT NULL DEFAULT 'junior_high'`);
+}
+
+// Migration: add grade_level column to subjects if not exists
+const subjectCols = db.prepare("PRAGMA table_info(subjects)").all().map(c => c.name);
+if (!subjectCols.includes('grade_level')) {
+  db.exec(`ALTER TABLE subjects ADD COLUMN grade_level TEXT NOT NULL DEFAULT 'junior_high'`);
+  // 將國小六年級科目標記為 elementary_6
+  db.exec(`UPDATE subjects SET grade_level = 'elementary_6' WHERE code IN ('CHN','ENG','SOC','NAT')`);
+  // 新增「國小數學」科目
+  db.prepare(`INSERT OR IGNORE INTO subjects (name, code, grade_level) VALUES ('國小數學','MATH_E','elementary_6')`).run();
+  // 將原本 grade_level='elementary_6' 且 subject_id 指向「數學(MATH)」的題目，改連結到「國小數學(MATH_E)」
+  const mathRow  = db.prepare(`SELECT id FROM subjects WHERE code = 'MATH'`).get();
+  const mathERow = db.prepare(`SELECT id FROM subjects WHERE code = 'MATH_E'`).get();
+  if (mathRow && mathERow) {
+    db.prepare(`UPDATE questions SET subject_id = ? WHERE grade_level = 'elementary_6' AND subject_id = ?`)
+      .run(mathERow.id, mathRow.id);
+  }
+}
+
+// Seed subjects（包含 grade_level）
+const insertSubject = db.prepare(`INSERT OR IGNORE INTO subjects (name, code, grade_level) VALUES (?, ?, ?)`);
 [
-  ['數學', 'MATH'],
-  ['自然科學', 'SCI'],
-  ['物理', 'PHY'],
-  ['化學', 'CHEM'],
-  ['生物', 'BIO'],
-  ['地球科學', 'EARTH'],
-].forEach(([name, code]) => insertSubject.run(name, code));
+  // 升國中科目
+  ['數學',     'MATH',  'junior_high'],
+  ['自然科學', 'SCI',   'junior_high'],
+  ['物理',     'PHY',   'junior_high'],
+  ['化學',     'CHEM',  'junior_high'],
+  ['生物',     'BIO',   'junior_high'],
+  ['地球科學', 'EARTH', 'junior_high'],
+  // 國小六年級科目
+  ['國語',     'CHN',   'elementary_6'],
+  ['英語',     'ENG',   'elementary_6'],
+  ['社會',     'SOC',   'elementary_6'],
+  ['自然',     'NAT',   'elementary_6'],
+  ['國小數學', 'MATH_E','elementary_6'],
+].forEach(([name, code, grade_level]) => insertSubject.run(name, code, grade_level));
 
 module.exports = db;

@@ -34,7 +34,12 @@ app.use('/api/', apiLimiter);
 
 // ─── Subjects ────────────────────────────────────────────────────────────────
 app.get('/api/subjects', (req, res) => {
-  res.json(db.prepare('SELECT * FROM subjects ORDER BY id').all());
+  const { grade_level } = req.query;
+  if (grade_level) {
+    res.json(db.prepare('SELECT * FROM subjects WHERE grade_level = ? ORDER BY id').all(grade_level));
+  } else {
+    res.json(db.prepare('SELECT * FROM subjects ORDER BY id').all());
+  }
 });
 
 // ─── 管理員金鑰驗證中介層 ────────────────────────────────────────────────────
@@ -49,13 +54,14 @@ function requireAdmin(req, res, next) {
 }
 // ─── Random Questions ────────────────────────────────────────────────────────
 app.get('/api/questions/random', (req, res) => {
-  const { subject_id, type, difficulty_min, difficulty_max, count = 10 } = req.query;
+  const { subject_id, type, difficulty_min, difficulty_max, grade_level, count = 10 } = req.query;
   const where = [];
   const params = [];
   if (subject_id)     { where.push('q.subject_id = ?');   params.push(subject_id); }
   if (type)           { where.push('q.type = ?');         params.push(type); }
   if (difficulty_min) { where.push('q.difficulty >= ?');  params.push(difficulty_min); }
   if (difficulty_max) { where.push('q.difficulty <= ?');  params.push(difficulty_max); }
+  if (grade_level)    { where.push('q.grade_level = ?');  params.push(grade_level); }
   const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
   const data = db.prepare(`
     SELECT q.*, s.name as subject_name FROM questions q
@@ -67,13 +73,14 @@ app.get('/api/questions/random', (req, res) => {
 
 // ─── Questions ───────────────────────────────────────────────────────────────
 app.get('/api/questions', (req, res) => {
-  const { subject_id, type, difficulty, search, page = 1, limit = 20 } = req.query;
+  const { subject_id, type, difficulty, search, grade_level, page = 1, limit = 20 } = req.query;
   const where = [];
   const params = [];
-  if (subject_id) { where.push('q.subject_id = ?'); params.push(subject_id); }
-  if (type)       { where.push('q.type = ?');       params.push(type); }
-  if (difficulty) { where.push('q.difficulty = ?'); params.push(difficulty); }
-  if (search)     { where.push('(q.content LIKE ? OR q.tags LIKE ?)'); params.push(`%${search}%`, `%${search}%`); }
+  if (subject_id)  { where.push('q.subject_id = ?'); params.push(subject_id); }
+  if (type)        { where.push('q.type = ?');       params.push(type); }
+  if (difficulty)  { where.push('q.difficulty = ?'); params.push(difficulty); }
+  if (search)      { where.push('(q.content LIKE ? OR q.tags LIKE ?)'); params.push(`%${search}%`, `%${search}%`); }
+  if (grade_level) { where.push('q.grade_level = ?'); params.push(grade_level); }
 
   const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
   const pageNum  = Math.max(1, parseInt(page)  || 1);
@@ -98,22 +105,26 @@ app.get('/api/questions/:id', (req, res) => {
 });
 
 app.post('/api/questions', requireAdmin, (req, res) => {
-  const { subject_id, type, difficulty, content, option_a, option_b, option_c, option_d, answer, explanation, source, tags } = req.body;
+  const { subject_id, type, difficulty, content, option_a, option_b, option_c, option_d, answer, explanation, source, tags, grade_level = 'junior_high' } = req.body;
   if (!subject_id || !type || !difficulty || !content || !answer)
     return res.status(400).json({ error: '必填欄位不完整' });
+  if (!['elementary_6', 'junior_high'].includes(grade_level))
+    return res.status(400).json({ error: '學段值無效，請使用 elementary_6 或 junior_high' });
   const r = db.prepare(`
-    INSERT INTO questions (subject_id,type,difficulty,content,option_a,option_b,option_c,option_d,answer,explanation,source,tags)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-  `).run(subject_id, type, difficulty, content, option_a||null, option_b||null, option_c||null, option_d||null, answer, explanation||null, source||null, tags||null);
+    INSERT INTO questions (subject_id,type,difficulty,content,option_a,option_b,option_c,option_d,answer,explanation,source,tags,grade_level)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `).run(subject_id, type, difficulty, content, option_a||null, option_b||null, option_c||null, option_d||null, answer, explanation||null, source||null, tags||null, grade_level);
   res.json({ id: r.lastInsertRowid, message: '題目新增成功' });
 });
 
 app.put('/api/questions/:id', requireAdmin, (req, res) => {
-  const { subject_id, type, difficulty, content, option_a, option_b, option_c, option_d, answer, explanation, source, tags } = req.body;
+  const { subject_id, type, difficulty, content, option_a, option_b, option_c, option_d, answer, explanation, source, tags, grade_level } = req.body;
+  if (grade_level && !['elementary_6', 'junior_high'].includes(grade_level))
+    return res.status(400).json({ error: '學段值無效，請使用 elementary_6 或 junior_high' });
   const r = db.prepare(`
     UPDATE questions SET subject_id=?,type=?,difficulty=?,content=?,option_a=?,option_b=?,option_c=?,option_d=?,
-    answer=?,explanation=?,source=?,tags=?,updated_at=datetime('now','localtime') WHERE id=?
-  `).run(subject_id, type, difficulty, content, option_a||null, option_b||null, option_c||null, option_d||null, answer, explanation||null, source||null, tags||null, req.params.id);
+    answer=?,explanation=?,source=?,tags=?,grade_level=COALESCE(?,grade_level),updated_at=datetime('now','localtime') WHERE id=?
+  `).run(subject_id, type, difficulty, content, option_a||null, option_b||null, option_c||null, option_d||null, answer, explanation||null, source||null, tags||null, grade_level||null, req.params.id);
   if (r.changes === 0) return res.status(404).json({ error: '找不到題目' });
   res.json({ message: '題目更新成功' });
 });
@@ -165,11 +176,13 @@ app.get('/api/exams/:id/take', (req, res) => {
 });
 
 app.post('/api/exams', requireAdmin, (req, res) => {
-  const { title, description, duration_min = 60, question_ids } = req.body;
+  const { title, description, duration_min = 60, status = 'draft', question_ids } = req.body;
   if (!title) return res.status(400).json({ error: '試卷標題為必填' });
+  if (!['draft', 'active', 'closed'].includes(status))
+    return res.status(400).json({ error: '狀態值無效' });
   // L-2: Transaction 保護多步驟寫入
   const createExam = db.transaction(() => {
-    const exam = db.prepare(`INSERT INTO exams (title, description, duration_min) VALUES (?,?,?)`).run(title, description||null, duration_min);
+    const exam = db.prepare(`INSERT INTO exams (title, description, duration_min, status) VALUES (?,?,?,?)`).run(title, description||null, duration_min, status);
     if (question_ids && question_ids.length) {
       const ins = db.prepare(`INSERT INTO exam_questions (exam_id,question_id,sort_order,score) VALUES (?,?,?,?)`);
       question_ids.forEach((qid, i) => ins.run(exam.lastInsertRowid, qid.id || qid, i + 1, qid.score || 5));
@@ -300,4 +313,14 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`\n🎓 升國中數理資優班考題系統\n   http://localhost:${PORT}\n`));
+app.listen(PORT, () => console.log(`\n🎓 升國中數理資優班考題系統\n   http://localhost:${PORT}\n`))
+  .on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`\n❌ 錯誤：Port ${PORT} 已被其他程式佔用。`);
+      console.error(`   請先關閉佔用 port 的程式，或改用其他 port：`);
+      console.error(`   set PORT=8080 && node server.js\n`);
+    } else {
+      console.error(`\n❌ 伺服器啟動失敗：${err.message}\n`);
+    }
+    process.exit(1);
+  });

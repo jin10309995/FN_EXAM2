@@ -25,6 +25,11 @@ node seed.js
 
 :: 植入 500 題
 node seed500.js
+
+:: 植入國小六年級題目（三個 seed 檔依序執行）
+node seed_elementary.js
+node seed_elementary_extra.js
+node seed_elementary_final.js
 ```
 
 本專案沒有測試或 lint 腳本。
@@ -74,6 +79,10 @@ doWork();
 
 考卷狀態生命週期：`draft`（草稿）→ `active`（進行中）→ `closed`（已結束）
 
+### 資料庫 Migration 機制
+
+`database.js` 在每次啟動時自動執行 migration：使用 `PRAGMA table_info(tableName)` 檢測欄位是否存在，若缺少則執行 `ALTER TABLE ADD COLUMN`。新增欄位時沿用此模式，不要手動修改 DB 檔案。
+
 ## 重要慣例
 
 ### 管理員驗證
@@ -91,6 +100,12 @@ doWork();
 - `calculation` — 計算題，保留供人工批改（儲存但不自動批改）
 
 難度為 1–5 的整數（由 DB CHECK 限制條件強制執行）。
+
+### 學段（grade_level）
+
+`questions` 與 `subjects` 兩張表都有 `grade_level` 欄位，值為 `elementary_6`（國小六年級）或 `junior_high`（升國中），預設 `junior_high`。科目資料中，`MATH` 是升國中數學；`MATH_E` 是國小數學（兩者分開）。
+
+`/api/subjects?grade_level=elementary_6`、`/api/questions?grade_level=elementary_6`、`/api/questions/random?grade_level=elementary_6` 均支援此篩選參數。
 
 ### 請求速率限制
 

@@ -29,6 +29,11 @@ body{font-family:'Noto Sans TC',sans-serif;}
   <div id="tab-questions">
     <div class="flex gap-3 mb-4 flex-wrap">
       <button onclick="openQuestionModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-medium transition-colors">+ 新增題目</button>
+      <select id="filter-grade" onchange="onFilterGradeChange()" class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
+        <option value="">全部學段</option>
+        <option value="elementary_6">國小六年級</option>
+        <option value="junior_high">升國中</option>
+      </select>
       <select id="filter-subject" onchange="loadQuestions()" class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
         <option value="">全部科目</option>
       </select>
@@ -81,6 +86,13 @@ body{font-family:'Noto Sans TC',sans-serif;}
     <div class="bg-white rounded-2xl p-6 w-full max-w-2xl">
       <h3 class="text-xl font-bold text-gray-800 mb-5" id="modal-title">新增題目</h3>
       <form id="question-form" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">學段 *</label>
+          <select id="q-grade-level" onchange="onGradeLevelChange()" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" required>
+            <option value="junior_high">升國中（資優班）</option>
+            <option value="elementary_6">國小六年級</option>
+          </select>
+        </div>
         <div class="grid grid-cols-3 gap-3">
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">科目 *</label>
@@ -175,7 +187,12 @@ body{font-family:'Noto Sans TC',sans-serif;}
       <div class="border rounded-xl p-4 mb-4">
         <div class="flex gap-3 mb-3 flex-wrap">
           <h4 class="font-medium text-gray-700">選擇題目</h4>
-          <select id="eq-subject" onchange="loadExamQuestions()" class="border border-gray-300 rounded px-2 py-1 text-sm ml-auto">
+          <select id="eq-grade" onchange="onEqGradeChange()" class="border border-gray-300 rounded px-2 py-1 text-sm ml-auto">
+            <option value="">全部學段</option>
+            <option value="elementary_6">國小六年級</option>
+            <option value="junior_high">升國中</option>
+          </select>
+          <select id="eq-subject" onchange="loadExamQuestions()" class="border border-gray-300 rounded px-2 py-1 text-sm">
             <option value="">全部科目</option>
           </select>
           <select id="eq-diff" onchange="loadExamQuestions()" class="border border-gray-300 rounded px-2 py-1 text-sm">
@@ -189,6 +206,14 @@ body{font-family:'Noto Sans TC',sans-serif;}
       <div class="border border-amber-200 rounded-xl p-4 mb-4 bg-amber-50/40">
         <h4 class="font-medium text-gray-700 mb-3">🎲 隨機抽題</h4>
         <div class="flex gap-2 flex-wrap items-end">
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">學段</label>
+            <select id="rand-grade" onchange="onRandGradeChange()" class="border border-gray-300 rounded px-2 py-1 text-sm">
+              <option value="">全部學段</option>
+              <option value="elementary_6">國小六年級</option>
+              <option value="junior_high">升國中</option>
+            </select>
+          </div>
           <div>
             <label class="block text-xs text-gray-500 mb-1">科目</label>
             <select id="rand-subject" class="border border-gray-300 rounded px-2 py-1 text-sm">
@@ -244,25 +269,57 @@ body{font-family:'Noto Sans TC',sans-serif;}
 let currentPage = 1;
 let editingQuestionId = null;
 let editingExamId = null;
-let subjects = [];
 let selectedQuestions = {};
 let allExamQPool = [];
 
 // ── Init ──────────────────────────────────────────────────────────────────
 async function init() {
-  const res = await fetch('/api/subjects');
-  subjects = await res.json();
-  const selects = ['q-subject','filter-subject','eq-subject','rand-subject'];
-  selects.forEach(id => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    subjects.forEach(s => {
-      const opt = document.createElement('option');
-      opt.value = s.id; opt.textContent = s.name;
-      el.appendChild(opt);
-    });
-  });
+  // 初始化時，依預設學段（junior_high）分別載入各科目下拉
+  await Promise.all([
+    loadSubjectsInto('q-subject',      'junior_high'),
+    loadSubjectsInto('filter-subject', ''),
+    loadSubjectsInto('eq-subject',     ''),
+    loadSubjectsInto('rand-subject',   ''),
+  ]);
   loadQuestions();
+}
+
+// 依學段載入科目選項到指定 select 元素
+async function loadSubjectsInto(selectId, grade_level) {
+  const el = document.getElementById(selectId);
+  if (!el) return;
+  const url = grade_level ? `/api/subjects?grade_level=${grade_level}` : '/api/subjects';
+  const res = await fetch(url);
+  const list = await res.json();
+  // 保留第一個空白「全部科目」選項（如果有），再填入科目
+  const firstOpt = el.options[0] && el.options[0].value === '' ? el.options[0].outerHTML : '';
+  el.innerHTML = firstOpt + list.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+}
+
+// 題庫篩選：學段變更 → 重新載入科目下拉並刷新題目列表
+async function onFilterGradeChange() {
+  const grade = document.getElementById('filter-grade').value;
+  await loadSubjectsInto('filter-subject', grade);
+  loadQuestions();
+}
+
+// 題目 Modal：學段變更 → 重新載入科目下拉
+async function onGradeLevelChange() {
+  const grade = document.getElementById('q-grade-level').value;
+  await loadSubjectsInto('q-subject', grade);
+}
+
+// 試卷 Modal：學段變更 → 重新載入科目下拉並刷新題目清單
+async function onEqGradeChange() {
+  const grade = document.getElementById('eq-grade').value;
+  await loadSubjectsInto('eq-subject', grade);
+  loadExamQuestions();
+}
+
+// 隨機抽題：學段變更 → 重新載入科目下拉
+async function onRandGradeChange() {
+  const grade = document.getElementById('rand-grade').value;
+  await loadSubjectsInto('rand-subject', grade);
 }
 
 // ── Tab Switching ─────────────────────────────────────────────────────────
@@ -282,22 +339,26 @@ async function loadQuestions(page = 1) {
   const s = document.getElementById('filter-subject').value;
   const t = document.getElementById('filter-type').value;
   const d = document.getElementById('filter-diff').value;
+  const g = document.getElementById('filter-grade').value;
   const q = document.getElementById('filter-search').value;
   if (s) params.set('subject_id', s);
   if (t) params.set('type', t);
   if (d) params.set('difficulty', d);
+  if (g) params.set('grade_level', g);
   if (q) params.set('search', q);
   params.set('page', page); params.set('limit', 20);
 
   const res = await fetch('/api/questions?' + params);
   const data = await res.json();
   const typeLabel = {choice:'選擇題',fill:'填充題',calculation:'計算題'};
+  const gradeLabel = {junior_high:'升國中',elementary_6:'國小六年級'};
   const tbody = data.data.map(q => `
     <tr class="hover:bg-gray-50 border-b border-gray-100">
       <td class="px-4 py-3 text-sm text-gray-500">${q.id}</td>
       <td class="px-4 py-3"><span class="bg-indigo-50 text-indigo-700 text-xs px-2 py-0.5 rounded">${q.subject_name}</span></td>
       <td class="px-4 py-3 text-sm">${typeLabel[q.type]||q.type}</td>
       <td class="px-4 py-3 text-sm">${'★'.repeat(q.difficulty)}</td>
+      <td class="px-4 py-3 text-sm"><span class="${q.grade_level==='elementary_6'?'bg-green-50 text-green-700':'bg-blue-50 text-blue-700'} text-xs px-2 py-0.5 rounded">${gradeLabel[q.grade_level]||q.grade_level}</span></td>
       <td class="px-4 py-3 text-sm text-gray-800 max-w-xs truncate">${q.content}</td>
       <td class="px-4 py-3 text-sm text-gray-500">${q.tags||''}</td>
       <td class="px-4 py-3">
@@ -312,8 +373,8 @@ async function loadQuestions(page = 1) {
   document.getElementById('questions-table').innerHTML = `
     <div class="px-4 py-3 bg-gray-50 border-b text-sm text-gray-500">共 ${data.total} 道題目</div>
     <table class="w-full"><thead class="bg-gray-50 text-xs text-gray-500 uppercase">
-      <tr><th class="px-4 py-3 text-left">ID</th><th class="px-4 py-3 text-left">科目</th><th class="px-4 py-3 text-left">題型</th><th class="px-4 py-3 text-left">難度</th><th class="px-4 py-3 text-left">題目</th><th class="px-4 py-3 text-left">標籤</th><th class="px-4 py-3 text-left">操作</th></tr>
-    </thead><tbody>${tbody || '<tr><td colspan="7" class="text-center py-8 text-gray-400">沒有題目</td></tr>'}</tbody></table>
+      <tr><th class="px-4 py-3 text-left">ID</th><th class="px-4 py-3 text-left">科目</th><th class="px-4 py-3 text-left">題型</th><th class="px-4 py-3 text-left">難度</th><th class="px-4 py-3 text-left">學段</th><th class="px-4 py-3 text-left">題目</th><th class="px-4 py-3 text-left">標籤</th><th class="px-4 py-3 text-left">操作</th></tr>
+    </thead><tbody>${tbody || '<tr><td colspan="8" class="text-center py-8 text-gray-400">沒有題目</td></tr>'}</tbody></table>
   `;
 
   const pages = Math.ceil(data.total / 20);
@@ -325,18 +386,23 @@ async function loadQuestions(page = 1) {
 function openQuestionModal(data = null) {
   editingQuestionId = data ? data.id : null;
   document.getElementById('modal-title').textContent = data ? '編輯題目' : '新增題目';
-  document.getElementById('q-subject').value    = data?.subject_id || subjects[0]?.id || '';
-  document.getElementById('q-type').value       = data?.type || 'choice';
-  document.getElementById('q-difficulty').value = data?.difficulty || '3';
-  document.getElementById('q-content').value    = data?.content || '';
-  document.getElementById('q-opt-a').value      = data?.option_a || '';
-  document.getElementById('q-opt-b').value      = data?.option_b || '';
-  document.getElementById('q-opt-c').value      = data?.option_c || '';
-  document.getElementById('q-opt-d').value      = data?.option_d || '';
-  document.getElementById('q-answer').value     = data?.answer || '';
-  document.getElementById('q-explanation').value= data?.explanation || '';
-  document.getElementById('q-source').value     = data?.source || '';
-  document.getElementById('q-tags').value       = data?.tags || '';
+  const gradeLevel = data?.grade_level || 'junior_high';
+  document.getElementById('q-grade-level').value  = gradeLevel;
+  // 先載入對應學段的科目，再設定已選科目
+  loadSubjectsInto('q-subject', gradeLevel).then(() => {
+    document.getElementById('q-subject').value = data?.subject_id || '';
+  });
+  document.getElementById('q-type').value         = data?.type || 'choice';
+  document.getElementById('q-difficulty').value   = data?.difficulty || '3';
+  document.getElementById('q-content').value      = data?.content || '';
+  document.getElementById('q-opt-a').value        = data?.option_a || '';
+  document.getElementById('q-opt-b').value        = data?.option_b || '';
+  document.getElementById('q-opt-c').value        = data?.option_c || '';
+  document.getElementById('q-opt-d').value        = data?.option_d || '';
+  document.getElementById('q-answer').value       = data?.answer || '';
+  document.getElementById('q-explanation').value  = data?.explanation || '';
+  document.getElementById('q-source').value       = data?.source || '';
+  document.getElementById('q-tags').value         = data?.tags || '';
   toggleOptions();
   document.getElementById('question-modal').classList.remove('hidden');
 }
@@ -362,6 +428,7 @@ async function saveQuestion() {
     subject_id:  document.getElementById('q-subject').value,
     type:        document.getElementById('q-type').value,
     difficulty:  document.getElementById('q-difficulty').value,
+    grade_level: document.getElementById('q-grade-level').value,
     content:     document.getElementById('q-content').value.trim(),
     option_a:    document.getElementById('q-opt-a').value.trim(),
     option_b:    document.getElementById('q-opt-b').value.trim(),
@@ -437,8 +504,10 @@ async function deleteExam(id) {
 async function loadExamQuestions() {
   const params = new URLSearchParams();
   const s = document.getElementById('eq-subject').value;
+  const g = document.getElementById('eq-grade').value;
   const d = document.getElementById('eq-diff').value;
   if (s) params.set('subject_id', s);
+  if (g) params.set('grade_level', g);
   if (d) params.set('difficulty', d);
   params.set('limit', 100);
   const res = await fetch('/api/questions?' + params);
@@ -463,11 +532,13 @@ function toggleQuestion(id) {
 async function randomPickQuestions() {
   const params = new URLSearchParams();
   const s    = document.getElementById('rand-subject').value;
+  const g    = document.getElementById('rand-grade').value;
   const t    = document.getElementById('rand-type').value;
   const dMin = document.getElementById('rand-diff-min').value;
   const dMax = document.getElementById('rand-diff-max').value;
   const cnt  = parseInt(document.getElementById('rand-count').value) || 10;
   if (s)    params.set('subject_id', s);
+  if (g)    params.set('grade_level', g);
   if (t)    params.set('type', t);
   if (dMin) params.set('difficulty_min', dMin);
   if (dMax) params.set('difficulty_max', dMax);
