@@ -29,7 +29,7 @@ const indexHtml = `<!DOCTYPE html>
     <h1 class="text-4xl font-bold text-indigo-800 mb-2">數理資優班考題系統</h1>
     <p class="text-lg text-gray-600">升國中數理資優班甄試平台</p>
   </div>
-  <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
     <a href="/exam-list.html" class="bg-white rounded-2xl shadow-lg p-8 hover:shadow-xl transition-all hover:-translate-y-1 cursor-pointer block text-center">
       <div class="text-5xl mb-4">📝</div>
       <h2 class="text-xl font-bold text-gray-800 mb-2">參加考試</h2>
@@ -39,6 +39,11 @@ const indexHtml = `<!DOCTYPE html>
       <div class="text-5xl mb-4">⚙️</div>
       <h2 class="text-xl font-bold text-gray-800 mb-2">後台管理</h2>
       <p class="text-gray-500 text-sm">管理題庫與試卷</p>
+    </a>
+    <a href="/ai-generate.html" class="bg-white rounded-2xl shadow-lg p-8 hover:shadow-xl transition-all hover:-translate-y-1 cursor-pointer block text-center">
+      <div class="text-5xl mb-4">🤖</div>
+      <h2 class="text-xl font-bold text-gray-800 mb-2">AI 出題</h2>
+      <p class="text-gray-500 text-sm">用 LLM 自動生成考題</p>
     </a>
     <a href="/results.html" class="bg-white rounded-2xl shadow-lg p-8 hover:shadow-xl transition-all hover:-translate-y-1 cursor-pointer block text-center">
       <div class="text-5xl mb-4">📊</div>
@@ -1078,13 +1083,284 @@ init();
 </body>
 </html>`;
 
+// ── ai-generate.html ────────────────────────────────────────────────────────
+const aiGenerateHtml = `<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 出題 - 數理資優班考題系統</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>body{font-family:'Noto Sans TC',sans-serif;}</style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+<header class="bg-indigo-700 text-white py-4 px-6 shadow">
+  <div class="max-w-5xl mx-auto flex items-center gap-3">
+    <a href="/" class="text-indigo-200 hover:text-white">🏠</a>
+    <span class="text-lg font-bold">🤖 AI 智慧出題</span>
+  </div>
+</header>
+<main class="max-w-5xl mx-auto px-4 py-8">
+
+  <!-- API Key 設定說明 -->
+  <div class="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6">
+    <div class="flex items-start gap-3">
+      <span class="text-xl mt-0.5">🔑</span>
+      <div class="flex-1">
+        <p class="font-semibold text-amber-800 mb-1">使用前請先在伺服器設定 LLM API Key</p>
+        <p class="text-sm text-amber-700 mb-2">AI 出題功能需要在伺服器端的 <code class="bg-amber-100 px-1 rounded font-mono">.env</code> 檔案中設定 API Key，並重新啟動伺服器。<strong>前端頁面上的「管理員金鑰」欄位是後台驗證用，與 LLM 金鑰無關。</strong></p>
+        <details class="text-sm text-amber-700">
+          <summary class="cursor-pointer font-medium hover:text-amber-900">📋 展開設定說明</summary>
+          <div class="mt-2 space-y-1 pl-2 border-l-2 border-amber-300">
+            <p>1. 在系統資料夾中找到 <code class="bg-amber-100 px-1 rounded font-mono">.env</code> 檔案（若不存在請複製 <code class="bg-amber-100 px-1 rounded font-mono">.env.example</code>）</p>
+            <p>2. 依選用的服務填入對應金鑰：</p>
+            <ul class="ml-4 mt-1 space-y-0.5 list-disc">
+              <li><strong>OpenAI</strong>（GPT-4o-mini）：<code class="bg-amber-100 px-1 rounded font-mono">OPENAI_API_KEY=sk-...</code></li>
+              <li><strong>Google Gemini</strong>：<code class="bg-amber-100 px-1 rounded font-mono">GEMINI_API_KEY=AIza...</code></li>
+              <li><strong>Anthropic Claude</strong>：<code class="bg-amber-100 px-1 rounded font-mono">ANTHROPIC_API_KEY=sk-ant-...</code></li>
+            </ul>
+            <p>3. 儲存 <code class="bg-amber-100 px-1 rounded font-mono">.env</code> 後，重新啟動伺服器（<code class="bg-amber-100 px-1 rounded font-mono">start.bat</code>）即可使用</p>
+          </div>
+        </details>
+      </div>
+    </div>
+  </div>
+
+  <!-- 設定面板 -->
+  <div class="bg-white rounded-xl shadow p-6 mb-6">
+    <h2 class="text-lg font-bold text-gray-700 mb-4">出題設定</h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+
+      <div>
+        <label class="block text-sm font-medium text-gray-600 mb-1">LLM 提供者</label>
+        <select id="provider" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+          <option value="openai">OpenAI (GPT-4o-mini)</option>
+          <option value="gemini">Google Gemini 1.5 Flash</option>
+          <option value="claude">Anthropic Claude 3.5 Haiku</option>
+        </select>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-600 mb-1">學段</label>
+        <select id="grade_level" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" onchange="loadSubjects()">
+          <option value="junior_high">升國中</option>
+          <option value="elementary_6">國小六年級</option>
+        </select>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-600 mb-1">科目</label>
+        <select id="subject_id" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"></select>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-600 mb-1">題型</label>
+        <select id="type" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+          <option value="choice">單選題</option>
+          <option value="fill">填空題</option>
+          <option value="calculation">計算題</option>
+        </select>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-600 mb-1">難度（1–5）</label>
+        <select id="difficulty" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+          <option value="1">1 – 基礎</option>
+          <option value="2">2 – 初級</option>
+          <option value="3" selected>3 – 中等</option>
+          <option value="4">4 – 偏難</option>
+          <option value="5">5 – 挑戰</option>
+        </select>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-600 mb-1">題數</label>
+        <input id="count" type="number" min="1" max="20" value="5" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+      </div>
+
+      <div class="md:col-span-2 lg:col-span-3">
+        <label class="block text-sm font-medium text-gray-600 mb-1">自訂提示（選填，例如：著重二次方程式、避免文字題）</label>
+        <input id="hint" type="text" placeholder="可補充出題範圍或特殊要求…" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-600 mb-1">管理員金鑰（若伺服器有設定）</label>
+        <input id="api_key" type="password" placeholder="x-api-key" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+      </div>
+
+    </div>
+    <div class="mt-5 flex gap-3 flex-wrap">
+      <button onclick="generate()" id="btn-generate"
+        class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-6 py-2.5 rounded-lg transition-colors flex items-center gap-2">
+        <span id="btn-icon">✨</span> <span id="btn-text">開始出題</span>
+      </button>
+      <button onclick="saveSelected()" id="btn-save"
+        class="hidden bg-green-600 hover:bg-green-700 text-white font-bold px-6 py-2.5 rounded-lg transition-colors">
+        💾 儲存勾選的題目（<span id="save-count">0</span>）
+      </button>
+    </div>
+  </div>
+
+  <!-- 錯誤訊息 -->
+  <div id="error-box" class="hidden bg-red-50 border border-red-200 text-red-700 rounded-xl p-4 mb-6"></div>
+
+  <!-- 成功訊息 -->
+  <div id="success-box" class="hidden bg-green-50 border border-green-200 text-green-700 rounded-xl p-4 mb-6"></div>
+
+  <!-- 預覽區域 -->
+  <div id="preview-area"></div>
+
+</main>
+<script>
+let generatedQuestions = [];
+
+async function loadSubjects() {
+  const grade = document.getElementById('grade_level').value;
+  const res = await fetch('/api/subjects?grade_level=' + grade);
+  const subjects = await res.json();
+  const sel = document.getElementById('subject_id');
+  sel.innerHTML = subjects.map(s => \`<option value="\${s.id}">\${s.name}</option>\`).join('');
+}
+
+async function generate() {
+  const btn = document.getElementById('btn-generate');
+  const btnText = document.getElementById('btn-text');
+  const btnIcon = document.getElementById('btn-icon');
+  btn.disabled = true;
+  btnIcon.textContent = '⏳';
+  btnText.textContent = '生成中…';
+  document.getElementById('error-box').classList.add('hidden');
+  document.getElementById('success-box').classList.add('hidden');
+
+  const payload = {
+    provider:    document.getElementById('provider').value,
+    subject_id:  parseInt(document.getElementById('subject_id').value),
+    type:        document.getElementById('type').value,
+    difficulty:  parseInt(document.getElementById('difficulty').value),
+    count:       parseInt(document.getElementById('count').value),
+    grade_level: document.getElementById('grade_level').value,
+    hint:        document.getElementById('hint').value.trim()
+  };
+  const headers = { 'Content-Type': 'application/json' };
+  const key = document.getElementById('api_key').value.trim();
+  if (key) headers['x-api-key'] = key;
+
+  try {
+    const res = await fetch('/api/generate/questions', { method: 'POST', headers, body: JSON.stringify(payload) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '生成失敗');
+    generatedQuestions = data.questions;
+    renderPreview(generatedQuestions);
+    document.getElementById('btn-save').classList.remove('hidden');
+  } catch(e) {
+    const box = document.getElementById('error-box');
+    const isKeyMissing = e.message.includes('未設定');
+    if (isKeyMissing) {
+      const providerName = {openai:'OpenAI', gemini:'Google Gemini', claude:'Anthropic Claude'}[document.getElementById('provider').value] || '';
+      box.innerHTML = \`<p class="font-semibold mb-2">❌ \${e.message}</p>
+        <p class="text-sm">請在伺服器端的 <code class="bg-red-100 px-1 rounded font-mono">.env</code> 檔案中設定 <strong>\${providerName}</strong> 的 API Key，然後重新啟動伺服器（start.bat）。</p>
+        <p class="text-sm mt-1">詳細說明請參閱頁面頂端的「🔑 使用前請先在伺服器設定 LLM API Key」提示框。</p>\`;
+    } else {
+      box.textContent = '❌ ' + e.message;
+    }
+    box.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btnIcon.textContent = '✨';
+    btnText.textContent = '重新出題';
+  }
+}
+
+function renderPreview(questions) {
+  const area = document.getElementById('preview-area');
+  if (!questions.length) { area.innerHTML = '<p class="text-gray-400 text-center py-8">沒有生成任何題目</p>'; return; }
+  const typeMap = {choice:'選擇題', fill:'填空題', calculation:'計算題'};
+  area.innerHTML = questions.map((q, i) => \`
+    <div class="bg-white rounded-xl shadow p-5 mb-4 border-l-4 border-indigo-400">
+      <div class="flex items-start gap-3">
+        <input type="checkbox" id="chk-\${i}" checked onchange="updateSaveCount()"
+          class="mt-1 w-4 h-4 accent-indigo-600 flex-shrink-0">
+        <div class="flex-1">
+          <div class="flex gap-2 mb-2 flex-wrap">
+            <span class="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">\${q.subject_name}</span>
+            <span class="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">\${typeMap[q.type]||q.type}</span>
+            <span class="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">難度 \${q.difficulty}</span>
+          </div>
+          <p class="font-medium text-gray-800 mb-2 whitespace-pre-wrap" contenteditable="true"
+            onblur="generatedQuestions[\${i}].content=this.innerText">\${escHtml(q.content)}</p>
+          \${q.option_a ? \`
+          <div class="grid grid-cols-2 gap-1 mb-2 text-sm">
+            \${['a','b','c','d'].map(opt => q['option_'+opt] ? \`
+              <div class="flex gap-1 items-start">
+                <span class="font-bold text-indigo-600 uppercase">\${opt}.</span>
+                <span contenteditable="true" onblur="generatedQuestions[\${i}]['option_'+'\${opt}']=this.innerText">\${escHtml(q['option_'+opt])}</span>
+              </div>\` : '').join('')}
+          </div>\` : ''}
+          <div class="text-sm flex gap-4 flex-wrap mt-1">
+            <span>✅ 答案：<strong contenteditable="true" onblur="generatedQuestions[\${i}].answer=this.innerText">\${escHtml(q.answer)}</strong></span>
+            \${q.explanation ? \`<span class="text-gray-500">💡 <span contenteditable="true" onblur="generatedQuestions[\${i}].explanation=this.innerText">\${escHtml(q.explanation)}</span></span>\` : ''}
+          </div>
+          \${q.tags ? \`<p class="text-xs text-gray-400 mt-1">🏷 \${escHtml(q.tags)}</p>\` : ''}
+        </div>
+      </div>
+    </div>
+  \`).join('');
+  updateSaveCount();
+}
+
+function updateSaveCount() {
+  let count = 0;
+  generatedQuestions.forEach((_, i) => {
+    if (document.getElementById('chk-' + i)?.checked) count++;
+  });
+  document.getElementById('save-count').textContent = count;
+}
+
+async function saveSelected() {
+  const key = document.getElementById('api_key').value.trim();
+  const headers = { 'Content-Type': 'application/json' };
+  if (key) headers['x-api-key'] = key;
+
+  const toSave = generatedQuestions.filter((_, i) => document.getElementById('chk-' + i)?.checked);
+  if (!toSave.length) { alert('請至少勾選一道題目'); return; }
+
+  try {
+    const res = await fetch('/api/questions/batch', { method: 'POST', headers, body: JSON.stringify({ questions: toSave }) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '儲存失敗');
+    const box = document.getElementById('success-box');
+    box.textContent = '✅ ' + data.message;
+    box.classList.remove('hidden');
+    document.getElementById('btn-save').classList.add('hidden');
+    generatedQuestions.forEach((_, i) => {
+      const chk = document.getElementById('chk-' + i);
+      if (chk) chk.disabled = true;
+    });
+  } catch(e) {
+    const box = document.getElementById('error-box');
+    box.textContent = '❌ ' + e.message;
+    box.classList.remove('hidden');
+  }
+}
+
+function escHtml(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+loadSubjects();
+</script>
+</body>
+</html>`;
+
 const files = {
-  'public/index.html':     indexHtml,
-  'public/exam-list.html': examListHtml,
-  'public/exam.html':      examHtml,
-  'public/result.html':    resultHtml,
-  'public/admin.html':     adminHtml,
-  'public/results.html':   resultsHtml,
+  'public/index.html':       indexHtml,
+  'public/exam-list.html':   examListHtml,
+  'public/exam.html':        examHtml,
+  'public/result.html':      resultHtml,
+  'public/admin.html':       adminHtml,
+  'public/results.html':     resultsHtml,
+  'public/ai-generate.html': aiGenerateHtml,
 };
 
 for (const [filepath, content] of Object.entries(files)) {

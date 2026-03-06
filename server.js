@@ -5,6 +5,7 @@ const helmet = require('helmet');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const db = require('./database');
+const { generateQuestions } = require('./llm');
 
 const app = express();
 
@@ -121,10 +122,24 @@ app.put('/api/questions/:id', requireAdmin, (req, res) => {
   const { subject_id, type, difficulty, content, option_a, option_b, option_c, option_d, answer, explanation, source, tags, grade_level } = req.body;
   if (grade_level && !['elementary_6', 'junior_high'].includes(grade_level))
     return res.status(400).json({ error: '學段值無效，請使用 elementary_6 或 junior_high' });
+  // 使用 COALESCE 支援部分欄位更新，未傳入的欄位保留原值
   const r = db.prepare(`
-    UPDATE questions SET subject_id=?,type=?,difficulty=?,content=?,option_a=?,option_b=?,option_c=?,option_d=?,
-    answer=?,explanation=?,source=?,tags=?,grade_level=COALESCE(?,grade_level),updated_at=datetime('now','localtime') WHERE id=?
-  `).run(subject_id, type, difficulty, content, option_a||null, option_b||null, option_c||null, option_d||null, answer, explanation||null, source||null, tags||null, grade_level||null, req.params.id);
+    UPDATE questions SET
+      subject_id=COALESCE(?,subject_id), type=COALESCE(?,type), difficulty=COALESCE(?,difficulty),
+      content=COALESCE(?,content),
+      option_a=COALESCE(?,option_a), option_b=COALESCE(?,option_b),
+      option_c=COALESCE(?,option_c), option_d=COALESCE(?,option_d),
+      answer=COALESCE(?,answer), explanation=COALESCE(?,explanation),
+      source=COALESCE(?,source), tags=COALESCE(?,tags),
+      grade_level=COALESCE(?,grade_level),
+      updated_at=datetime('now','localtime')
+    WHERE id=?
+  `).run(
+    subject_id||null, type||null, difficulty||null, content||null,
+    option_a||null, option_b||null, option_c||null, option_d||null,
+    answer||null, explanation||null, source||null, tags||null,
+    grade_level||null, req.params.id
+  );
   if (r.changes === 0) return res.status(404).json({ error: '找不到題目' });
   res.json({ message: '題目更新成功' });
 });
@@ -195,10 +210,16 @@ app.post('/api/exams', requireAdmin, (req, res) => {
 
 app.put('/api/exams/:id', requireAdmin, (req, res) => {
   const { title, description, duration_min, status, question_ids } = req.body;
-  // L-2: Transaction 保護
+  const exam = db.prepare('SELECT id FROM exams WHERE id = ?').get(req.params.id);
+  if (!exam) return res.status(404).json({ error: '找不到試卷' });
+  // L-2: Transaction 保護；使用 COALESCE 支援部分欄位更新
   const updateExam = db.transaction(() => {
-    db.prepare(`UPDATE exams SET title=?,description=?,duration_min=?,status=? WHERE id=?`)
-      .run(title, description||null, duration_min, status, req.params.id);
+    db.prepare(`
+      UPDATE exams SET
+        title=COALESCE(?,title), description=COALESCE(?,description),
+        duration_min=COALESCE(?,duration_min), status=COALESCE(?,status)
+      WHERE id=?
+    `).run(title||null, description||null, duration_min||null, status||null, req.params.id);
     if (question_ids) {
       db.prepare(`DELETE FROM exam_questions WHERE exam_id = ?`).run(req.params.id);
       const ins = db.prepare(`INSERT INTO exam_questions (exam_id,question_id,sort_order,score) VALUES (?,?,?,?)`);
@@ -220,6 +241,88 @@ app.delete('/api/exams/:id', requireAdmin, (req, res) => {
   });
   deleteExam(req.params.id);
   res.json({ message: '試卷刪除成功' });
+});
+
+// ─── LLM 出題 ────────────────────────────────────────────────────────────────
+// POST /api/generate/questions — 呼叫 LLM 產生題目預覽（不存 DB）
+app.post('/api/generate/questions', requireAdmin, async (req, res) => {
+  try {
+    const {
+      provider = process.env.LLM_PROVIDER || 'openai',
+      subject_id, type = 'choice', difficulty = 3,
+      count = 5, grade_level = 'junior_high', hint = ''
+    } = req.body;
+
+    if (!subject_id) return res.status(400).json({ error: '必須指定科目 subject_id' });
+
+    const subject = db.prepare('SELECT * FROM subjects WHERE id = ?').get(subject_id);
+    if (!subject) return res.status(404).json({ error: '找不到指定科目' });
+
+    const typeLabel = { choice: '單選題（A/B/C/D）', fill: '填空題', calculation: '計算題' }[type] || type;
+    const gradeLabel = grade_level === 'elementary_6' ? '國小六年級' : '升國中（七年級準備）';
+    const userPrompt = `請出 ${count} 題「${subject.name}」${gradeLabel}的${typeLabel}，難度 ${difficulty}/5（1 最易，5 最難）。${hint ? `\n補充要求：${hint}` : ''}`;
+
+    const questions = await generateQuestions(provider, userPrompt);
+
+    // 將科目與型別資訊補入預覽結果
+    const preview = questions.slice(0, count).map(q => ({
+      subject_id,
+      subject_name: subject.name,
+      type,
+      difficulty: parseInt(difficulty),
+      grade_level,
+      content:     q.content     || '',
+      option_a:    q.option_a    || null,
+      option_b:    q.option_b    || null,
+      option_c:    q.option_c    || null,
+      option_d:    q.option_d    || null,
+      answer:      q.answer      || '',
+      explanation: q.explanation || null,
+      tags:        q.tags        || null
+    }));
+
+    res.json({ provider, count: preview.length, questions: preview });
+  } catch (err) {
+    const isKeyMissing = err.message.includes('未設定');
+    res.status(isKeyMissing ? 503 : 500).json({ error: err.message });
+  }
+});
+
+// POST /api/questions/batch — 批次儲存審核後的題目
+app.post('/api/questions/batch', requireAdmin, (req, res) => {
+  const { questions } = req.body;
+  if (!Array.isArray(questions) || questions.length === 0)
+    return res.status(400).json({ error: 'questions 陣列不得為空' });
+
+  const ins = db.prepare(`
+    INSERT INTO questions
+      (subject_id,type,difficulty,content,option_a,option_b,option_c,option_d,answer,explanation,source,tags,grade_level)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `);
+  const insertAll = db.transaction((items) => {
+    const ids = [];
+    for (const q of items) {
+      if (!q.subject_id || !q.type || !q.difficulty || !q.content || !q.answer)
+        throw new Error('題目資料不完整，缺少必填欄位');
+      if (!['elementary_6', 'junior_high'].includes(q.grade_level || 'junior_high'))
+        throw new Error('學段值無效');
+      const r = ins.run(
+        q.subject_id, q.type, q.difficulty, q.content,
+        q.option_a||null, q.option_b||null, q.option_c||null, q.option_d||null,
+        q.answer, q.explanation||null, q.source||null, q.tags||null,
+        q.grade_level||'junior_high'
+      );
+      ids.push(r.lastInsertRowid);
+    }
+    return ids;
+  });
+
+  try {
+    const ids = insertAll(questions);
+    res.json({ message: `成功儲存 ${ids.length} 道題目`, ids });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // ─── Submissions ─────────────────────────────────────────────────────────────
