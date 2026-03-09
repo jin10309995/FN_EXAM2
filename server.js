@@ -55,28 +55,33 @@ function requireAdmin(req, res, next) {
 }
 // ─── Random Questions ────────────────────────────────────────────────────────
 app.get('/api/questions/random', (req, res) => {
-  const { subject_id, type, difficulty_min, difficulty_max, grade_level, count = 10 } = req.query;
-  const where = [];
+  const { subject_id, type, difficulty_min, difficulty_max, grade_level, count = 10, weighted } = req.query;
+  const where = ['q.is_archived = 0'];
   const params = [];
   if (subject_id)     { where.push('q.subject_id = ?');   params.push(subject_id); }
   if (type)           { where.push('q.type = ?');         params.push(type); }
   if (difficulty_min) { where.push('q.difficulty >= ?');  params.push(difficulty_min); }
   if (difficulty_max) { where.push('q.difficulty <= ?');  params.push(difficulty_max); }
   if (grade_level)    { where.push('q.grade_level = ?');  params.push(grade_level); }
-  const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
+  const w = 'WHERE ' + where.join(' AND ');
+  // 加權隨機：依 wrong_count 指數分佈加權，錯越多出現越頻繁
+  const orderBy = weighted === '1'
+    ? '-LOG(ABS(CAST(RANDOM() AS REAL) / 9223372036854775807)) / (q.wrong_count + 1)'
+    : 'RANDOM()';
   const data = db.prepare(`
     SELECT q.*, s.name as subject_name FROM questions q
     JOIN subjects s ON s.id = q.subject_id
-    ${w} ORDER BY RANDOM() LIMIT ?
+    ${w} ORDER BY ${orderBy} LIMIT ?
   `).all(...params, parseInt(count));
   res.json(data);
 });
 
 // ─── Questions ───────────────────────────────────────────────────────────────
 app.get('/api/questions', (req, res) => {
-  const { subject_id, type, difficulty, search, grade_level, page = 1, limit = 20 } = req.query;
+  const { subject_id, type, difficulty, search, grade_level, include_archived, page = 1, limit = 20 } = req.query;
   const where = [];
   const params = [];
+  if (!include_archived) { where.push('q.is_archived = 0'); }
   if (subject_id)  { where.push('q.subject_id = ?'); params.push(subject_id); }
   if (type)        { where.push('q.type = ?');       params.push(type); }
   if (difficulty)  { where.push('q.difficulty = ?'); params.push(difficulty); }
@@ -351,20 +356,72 @@ app.post('/api/exams/:id/submit', submitLimiter, (req, res) => {
     return { question_id: q.question_id, given_answer: given, is_correct: isCorrect, score_earned: scoreEarned };
   });
 
-  // L-2: Transaction 保護提交與明細寫入
+  // L-2: Transaction 保護提交與明細寫入，同步更新答對/答錯次數
   const saveSubmission = db.transaction(() => {
     const sub = db.prepare(`
       INSERT INTO submissions (exam_id, student_name, student_id, answers, score, total_score)
       VALUES (?,?,?,?,?,?)
     `).run(req.params.id, student_name, student_id||null, JSON.stringify(answers), earnedScore, totalScore);
     const insDetail = db.prepare(`INSERT INTO answer_details (submission_id,question_id,given_answer,is_correct,score_earned) VALUES (?,?,?,?,?)`);
-    details.forEach(d => insDetail.run(sub.lastInsertRowid, d.question_id, d.given_answer, d.is_correct, d.score_earned));
+    const updCorrect = db.prepare(`UPDATE questions SET correct_count = correct_count + 1 WHERE id = ?`);
+    const updWrong   = db.prepare(`UPDATE questions SET wrong_count   = wrong_count   + 1 WHERE id = ?`);
+    details.forEach(d => {
+      insDetail.run(sub.lastInsertRowid, d.question_id, d.given_answer, d.is_correct, d.score_earned);
+      if (d.is_correct) updCorrect.run(d.question_id);
+      else              updWrong.run(d.question_id);
+    });
     return sub.lastInsertRowid;
   });
   const submissionId = saveSubmission();
 
+  // 非同步封存超過5次答對的題目並 LLM 自動替換（不阻塞回應）
+  setImmediate(() => archiveAndReplace());
+
   res.json({ submission_id: submissionId, score: earnedScore, total_score: totalScore, percentage: Math.round(earnedScore / totalScore * 100) });
 });
+
+// 封存答對 >5 次的題目，並用 LLM 自動生成難度 +1 的替換題
+async function archiveAndReplace() {
+  const toArchive = db.prepare(`
+    SELECT q.*, s.name as subject_name, s.code as subject_code
+    FROM questions q JOIN subjects s ON s.id = q.subject_id
+    WHERE q.correct_count > 5 AND q.is_archived = 0
+  `).all();
+  if (!toArchive.length) return;
+
+  const archive = db.prepare(`UPDATE questions SET is_archived = 1 WHERE id = ?`);
+  const provider = process.env.LLM_PROVIDER || 'openai';
+
+  for (const q of toArchive) {
+    // 先封存
+    archive.run(q.id);
+    console.log(`[AutoArchive] 題目 #${q.id}（${q.subject_name}，難度${q.difficulty}）答對 >5 次，已封存`);
+
+    // 嘗試 LLM 自動生成替換題
+    const newDiff = Math.min(q.difficulty + 1, 5);
+    const typeLabel = { choice: '單選題（A/B/C/D）', fill: '填空題', calculation: '計算題' }[q.type] || q.type;
+    const gradeLabel = q.grade_level === 'elementary_6' ? '國小六年級' : '升國中（七年級準備）';
+    const prompt = `請出 1 題「${q.subject_name}」${gradeLabel}的${typeLabel}，難度 ${newDiff}/5（1 最易，5 最難）。請勿與以下題目重複：${q.content}`;
+
+    try {
+      const generated = await generateQuestions(provider, prompt);
+      if (!generated || !generated.length) throw new Error('LLM 回傳空陣列');
+      const nq = generated[0];
+      db.prepare(`
+        INSERT INTO questions (subject_id, type, difficulty, content, option_a, option_b, option_c, option_d, answer, explanation, tags, grade_level, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        q.subject_id, q.type, newDiff,
+        nq.content || '', nq.option_a || null, nq.option_b || null, nq.option_c || null, nq.option_d || null,
+        nq.answer || '', nq.explanation || null, nq.tags || null, q.grade_level,
+        `自動替換（原題 #${q.id}）`
+      );
+      console.log(`[AutoReplace] 已為題目 #${q.id} 生成難度 ${newDiff} 替換題`);
+    } catch (err) {
+      console.warn(`[AutoReplace] 題目 #${q.id} LLM 替換失敗：${err.message}`);
+    }
+  }
+}
 
 // GET submission result
 app.get('/api/submissions/:id', (req, res) => {
@@ -379,7 +436,87 @@ app.get('/api/submissions/:id', (req, res) => {
   res.json({ ...sub, details });
 });
 
-// GET all submissions for an exam
+// GET analysis report for a submission
+app.get('/api/submissions/:id/analysis', (req, res) => {
+  const sub = db.prepare('SELECT * FROM submissions WHERE id = ?').get(req.params.id);
+  if (!sub) return res.status(404).json({ error: '找不到作答紀錄' });
+
+  const exam = db.prepare('SELECT title FROM exams WHERE id = ?').get(sub.exam_id);
+  const details = db.prepare(`
+    SELECT ad.*, q.content, q.answer as correct_answer, q.explanation, q.type,
+           q.difficulty, q.subject_id, s.name as subject_name,
+           q.option_a, q.option_b, q.option_c, q.option_d
+    FROM answer_details ad
+    JOIN questions q ON q.id = ad.question_id
+    JOIN subjects s ON s.id = q.subject_id
+    WHERE ad.submission_id = ?
+  `).all(req.params.id);
+
+  const pct = sub.total_score > 0 ? Math.round(sub.score * 100 / sub.total_score) : 0;
+
+  // 各科目統計
+  const bySubject = {};
+  details.forEach(d => {
+    if (!bySubject[d.subject_name]) bySubject[d.subject_name] = { correct: 0, wrong: 0, score: 0, total: 0 };
+    bySubject[d.subject_name].total++;
+    if (d.is_correct) bySubject[d.subject_name].correct++;
+    else bySubject[d.subject_name].wrong++;
+    bySubject[d.subject_name].score += d.score_earned;
+  });
+
+  // 各難度統計
+  const byDifficulty = {};
+  for (let i = 1; i <= 5; i++) byDifficulty[i] = { correct: 0, wrong: 0, total: 0 };
+  details.forEach(d => {
+    const diff = d.difficulty || 1;
+    byDifficulty[diff].total++;
+    if (d.is_correct) byDifficulty[diff].correct++;
+    else byDifficulty[diff].wrong++;
+  });
+
+  // 弱點題目（答錯的題目）
+  const weakQuestions = details.filter(d => !d.is_correct).map(d => ({
+    content: d.content, type: d.type, difficulty: d.difficulty,
+    subject_name: d.subject_name, correct_answer: d.correct_answer,
+    given_answer: d.given_answer, explanation: d.explanation,
+    option_a: d.option_a, option_b: d.option_b, option_c: d.option_c, option_d: d.option_d
+  }));
+
+  // 建議文字（依弱點科目和難度）
+  const weakSubjects = Object.entries(bySubject)
+    .filter(([, v]) => v.wrong > v.correct)
+    .map(([name]) => name);
+  const avgWrongDiff = weakQuestions.length
+    ? (weakQuestions.reduce((s, q) => s + (q.difficulty || 1), 0) / weakQuestions.length).toFixed(1)
+    : null;
+
+  let suggestions = [];
+  if (weakSubjects.length) suggestions.push(`建議加強：${weakSubjects.join('、')} 的練習。`);
+  if (avgWrongDiff) suggestions.push(`答錯題目平均難度為 ${avgWrongDiff}，建議從此難度附近的題目開始複習。`);
+  if (pct >= 90) suggestions.push('表現優異！可嘗試更高難度的挑戰題。');
+  else if (pct >= 70) suggestions.push('整體表現良好，繼續加油！');
+  else suggestions.push('建議重新複習答錯的題目，加強基礎概念。');
+
+  res.json({
+    submission_id: sub.id,
+    student_name: sub.student_name,
+    student_id: sub.student_id,
+    exam_title: exam?.title || '',
+    submitted_at: sub.submitted_at,
+    score: sub.score,
+    total_score: sub.total_score,
+    percentage: pct,
+    total_questions: details.length,
+    correct_count: details.filter(d => d.is_correct).length,
+    wrong_count: details.filter(d => !d.is_correct).length,
+    by_subject: bySubject,
+    by_difficulty: byDifficulty,
+    weak_questions: weakQuestions,
+    suggestions
+  });
+});
+
+
 app.get('/api/exams/:id/submissions', requireAdmin, (req, res) => {
   const rows = db.prepare(`
     SELECT id, student_name, student_id, score, total_score,

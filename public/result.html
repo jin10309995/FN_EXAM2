@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>考試結果 - 數理資優班考題系統</title>
 <script src="https://cdn.tailwindcss.com"></script>
+<script>MathJax = { tex: { inlineMath: [['$','$'],['\\(','\\)']], displayMath: [['$$','$$'],['\\[','\\]']] } };</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" id="MathJax-script" async></script>
 <style>body{font-family:'Noto Sans TC',sans-serif;}</style>
 </head>
 <body class="bg-gray-50 min-h-screen">
@@ -48,10 +50,12 @@ async function loadResult() {
         </div>
       `).join('')}
     </div>
-    <div class="mt-6 text-center">
+    <div class="mt-6 text-center flex gap-4 justify-center">
       <a href="/exam-list.html" class="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3 rounded-lg font-medium transition-colors">返回考試列表</a>
+      <a href="/analysis.html?id=${id}" class="bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-3 rounded-lg font-medium transition-colors">📊 查看答題分析報告</a>
     </div>
   `;
+  if (window.MathJax) MathJax.typesetPromise([document.getElementById('result-container')]);
 }
 loadResult();
 </script>

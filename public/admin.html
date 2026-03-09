@@ -52,6 +52,10 @@ body{font-family:'Noto Sans TC',sans-serif;}
         <option value="5">★★★★★ 競賽</option>
       </select>
       <input id="filter-search" type="text" placeholder="搜尋題目..." onkeyup="loadQuestions()" class="border border-gray-300 rounded-lg px-3 py-2 text-sm w-48">
+      <label class="flex items-center gap-1 text-sm text-gray-600 cursor-pointer">
+        <input type="checkbox" id="filter-archived" onchange="loadQuestions()" class="accent-indigo-600">
+        含封存題
+      </label>
     </div>
     <div id="questions-table" class="bg-white rounded-xl shadow overflow-hidden">
       <div class="text-center py-8 text-gray-400">載入中...</div>
@@ -250,6 +254,10 @@ body{font-family:'Noto Sans TC',sans-serif;}
             <input id="rand-count" type="number" value="10" min="1" max="100" class="border border-gray-300 rounded px-2 py-1 text-sm w-16">
           </div>
           <button onclick="randomPickQuestions()" class="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-sm rounded-lg font-medium transition-colors">隨機抽題</button>
+          <label class="flex items-center gap-1 text-xs text-gray-600 cursor-pointer">
+            <input type="checkbox" id="rand-weighted" class="accent-amber-500">
+            依答錯次數加權
+          </label>
         </div>
         <p id="rand-msg" class="text-xs text-gray-500 mt-2 hidden"></p>
       </div>
@@ -341,11 +349,13 @@ async function loadQuestions(page = 1) {
   const d = document.getElementById('filter-diff').value;
   const g = document.getElementById('filter-grade').value;
   const q = document.getElementById('filter-search').value;
+  const archived = document.getElementById('filter-archived')?.checked;
   if (s) params.set('subject_id', s);
   if (t) params.set('type', t);
   if (d) params.set('difficulty', d);
   if (g) params.set('grade_level', g);
   if (q) params.set('search', q);
+  if (archived) params.set('include_archived', '1');
   params.set('page', page); params.set('limit', 20);
 
   const res = await fetch('/api/questions?' + params);
@@ -353,14 +363,16 @@ async function loadQuestions(page = 1) {
   const typeLabel = {choice:'選擇題',fill:'填充題',calculation:'計算題'};
   const gradeLabel = {junior_high:'升國中',elementary_6:'國小六年級'};
   const tbody = data.data.map(q => `
-    <tr class="hover:bg-gray-50 border-b border-gray-100">
-      <td class="px-4 py-3 text-sm text-gray-500">${q.id}</td>
+    <tr class="hover:bg-gray-50 border-b border-gray-100 ${q.is_archived ? 'opacity-50' : ''}">
+      <td class="px-4 py-3 text-sm text-gray-500">${q.id}${q.is_archived ? ' <span class="text-xs bg-gray-200 text-gray-500 px-1 py-0.5 rounded">已封存</span>' : ''}</td>
       <td class="px-4 py-3"><span class="bg-indigo-50 text-indigo-700 text-xs px-2 py-0.5 rounded">${q.subject_name}</span></td>
       <td class="px-4 py-3 text-sm">${typeLabel[q.type]||q.type}</td>
       <td class="px-4 py-3 text-sm">${'★'.repeat(q.difficulty)}</td>
       <td class="px-4 py-3 text-sm"><span class="${q.grade_level==='elementary_6'?'bg-green-50 text-green-700':'bg-blue-50 text-blue-700'} text-xs px-2 py-0.5 rounded">${gradeLabel[q.grade_level]||q.grade_level}</span></td>
       <td class="px-4 py-3 text-sm text-gray-800 max-w-xs truncate">${q.content}</td>
       <td class="px-4 py-3 text-sm text-gray-500">${q.tags||''}</td>
+      <td class="px-4 py-3 text-sm text-center"><span class="text-green-600 font-medium">${q.correct_count||0}</span></td>
+      <td class="px-4 py-3 text-sm text-center"><span class="text-red-500 font-medium">${q.wrong_count||0}</span></td>
       <td class="px-4 py-3">
         <div class="flex gap-2">
           <button onclick="editQuestion(${q.id})" class="text-xs bg-blue-50 text-blue-600 hover:bg-blue-100 px-2 py-1 rounded transition-colors">編輯</button>
@@ -373,8 +385,8 @@ async function loadQuestions(page = 1) {
   document.getElementById('questions-table').innerHTML = `
     <div class="px-4 py-3 bg-gray-50 border-b text-sm text-gray-500">共 ${data.total} 道題目</div>
     <table class="w-full"><thead class="bg-gray-50 text-xs text-gray-500 uppercase">
-      <tr><th class="px-4 py-3 text-left">ID</th><th class="px-4 py-3 text-left">科目</th><th class="px-4 py-3 text-left">題型</th><th class="px-4 py-3 text-left">難度</th><th class="px-4 py-3 text-left">學段</th><th class="px-4 py-3 text-left">題目</th><th class="px-4 py-3 text-left">標籤</th><th class="px-4 py-3 text-left">操作</th></tr>
-    </thead><tbody>${tbody || '<tr><td colspan="8" class="text-center py-8 text-gray-400">沒有題目</td></tr>'}</tbody></table>
+      <tr><th class="px-4 py-3 text-left">ID</th><th class="px-4 py-3 text-left">科目</th><th class="px-4 py-3 text-left">題型</th><th class="px-4 py-3 text-left">難度</th><th class="px-4 py-3 text-left">學段</th><th class="px-4 py-3 text-left">題目</th><th class="px-4 py-3 text-left">標籤</th><th class="px-4 py-3 text-left text-green-600">✓答對</th><th class="px-4 py-3 text-left text-red-500">✗答錯</th><th class="px-4 py-3 text-left">操作</th></tr>
+    </thead><tbody>${tbody || '<tr><td colspan="10" class="text-center py-8 text-gray-400">沒有題目</td></tr>'}</tbody></table>
   `;
 
   const pages = Math.ceil(data.total / 20);
@@ -537,12 +549,14 @@ async function randomPickQuestions() {
   const dMin = document.getElementById('rand-diff-min').value;
   const dMax = document.getElementById('rand-diff-max').value;
   const cnt  = parseInt(document.getElementById('rand-count').value) || 10;
+  const weighted = document.getElementById('rand-weighted')?.checked;
   if (s)    params.set('subject_id', s);
   if (g)    params.set('grade_level', g);
   if (t)    params.set('type', t);
   if (dMin) params.set('difficulty_min', dMin);
   if (dMax) params.set('difficulty_max', dMax);
   params.set('count', cnt);
+  if (weighted) params.set('weighted', '1');
   const res = await fetch('/api/questions/random?' + params);
   const questions = await res.json();
   let added = 0;

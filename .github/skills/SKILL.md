@@ -37,7 +37,11 @@ description: 協助維護與開發基於 Node.js (Express) + SQLite 的線上甄
 - **原則**：**禁止**直接修改 `public/` 內的 HTML 檔案，因為它們是自動生成的。
 - **更新流程**：任何前端版面與邏輯變更，必須修改 `generate-public.js`，修改完成後**必須執行** `node generate-public.js` 重新產出頁面。
 
+## 4. 調整流程
+每次有動到程式時，則需進行系統測試，測試無誤後，如果涉及系統功能變更，則更新操作手冊內容。
+
 # 自訂約束 (Constraints)
 - **禁用複雜前端框架**：不使用 React、Vue 等，保持純 HTML + 原生 JS，樣式使用 Tailwind 實用類別。
 - **無縫重啟**：開發或修改 `server.js` 後，須提醒使用者手動重啟 Node 伺服器；前端變動提醒手動執行 `generate-public.js`。
 - **資料保護**：不得自動執行會清空原始資料的 `setup.bat`，除非使用者明確要求重設環境。
+

@@ -103,7 +103,7 @@ doWork();
 
 ### 學段（grade_level）
 
-`questions` 與 `subjects` 兩張表都有 `grade_level` 欄位，值為 `elementary_6`（國小六年級）或 `junior_high`（升國中），預設 `junior_high`。科目資料中，`MATH` 是升國中數學；`MATH_E` 是國小數學（兩者分開）。
+`questions` 與 `subjects` 兩張表都有 `grade_level` 欄位，值為 `elementary_6`（國小六年級）或 `junior_high`（升國中），預設 `junior_high`。科目資料中，`MATH` 是升國中數學；`MATH_E` 是國小數學（兩者名稱同為「數學」，以 `grade_level` 區分）。
 
 `/api/subjects?grade_level=elementary_6`、`/api/questions?grade_level=elementary_6`、`/api/questions/random?grade_level=elementary_6` 均支援此篩選參數。
 

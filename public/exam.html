@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>考試作答 - 數理資優班考題系統</title>
 <script src="https://cdn.tailwindcss.com"></script>
+<script>MathJax = { tex: { inlineMath: [['$','$'],['\\(','\\)']], displayMath: [['$$','$$'],['\\[','\\]']] } };</script>
 <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" id="MathJax-script" async></script>
 <style>body{font-family:'Noto Sans TC',sans-serif;}</style>
 </head>
@@ -90,7 +91,7 @@ function renderQuestions() {
       ${q.type === 'choice' ? renderChoices(q, i) : renderFill(q, i)}
     </div>
   `).join('') + '<div class="h-24"></div>';
-
+  if (window.MathJax) MathJax.typesetPromise([container]);
   nav.innerHTML = examData.questions.map((q,i) => `
     <button id="nav-${i}" onclick="scrollToQ(${i})" class="w-8 h-8 rounded text-sm font-medium border-2 border-gray-300 text-gray-600 hover:border-indigo-400">${i+1}</button>
   `).join('');

@@ -113,6 +113,7 @@ const examHtml = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>考試作答 - 數理資優班考題系統</title>
 <script src="https://cdn.tailwindcss.com"></script>
+<script>MathJax = { tex: { inlineMath: [['$','$'],['\\\\(','\\\\)']], displayMath: [['$$','$$'],['\\\\[','\\\\]']] } };</script>
 <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" id="MathJax-script" async></script>
 <style>body{font-family:'Noto Sans TC',sans-serif;}</style>
 </head>
@@ -198,7 +199,7 @@ function renderQuestions() {
       \${q.type === 'choice' ? renderChoices(q, i) : renderFill(q, i)}
     </div>
   \`).join('') + '<div class="h-24"></div>';
-
+  if (window.MathJax) MathJax.typesetPromise([container]);
   nav.innerHTML = examData.questions.map((q,i) => \`
     <button id="nav-\${i}" onclick="scrollToQ(\${i})" class="w-8 h-8 rounded text-sm font-medium border-2 border-gray-300 text-gray-600 hover:border-indigo-400">\${i+1}</button>
   \`).join('');
@@ -283,6 +284,8 @@ const resultHtml = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>考試結果 - 數理資優班考題系統</title>
 <script src="https://cdn.tailwindcss.com"></script>
+<script>MathJax = { tex: { inlineMath: [['$','$'],['\\\\(','\\\\)']], displayMath: [['$$','$$'],['\\\\[','\\\\]']] } };</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" id="MathJax-script" async></script>
 <style>body{font-family:'Noto Sans TC',sans-serif;}</style>
 </head>
 <body class="bg-gray-50 min-h-screen">
@@ -326,10 +329,12 @@ async function loadResult() {
         </div>
       \`).join('')}
     </div>
-    <div class="mt-6 text-center">
+    <div class="mt-6 text-center flex gap-4 justify-center">
       <a href="/exam-list.html" class="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3 rounded-lg font-medium transition-colors">返回考試列表</a>
+      <a href="/analysis.html?id=\${id}" class="bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-3 rounded-lg font-medium transition-colors">📊 查看答題分析報告</a>
     </div>
   \`;
+  if (window.MathJax) MathJax.typesetPromise([document.getElementById('result-container')]);
 }
 loadResult();
 </script>
@@ -391,6 +396,10 @@ body{font-family:'Noto Sans TC',sans-serif;}
         <option value="5">★★★★★ 競賽</option>
       </select>
       <input id="filter-search" type="text" placeholder="搜尋題目..." onkeyup="loadQuestions()" class="border border-gray-300 rounded-lg px-3 py-2 text-sm w-48">
+      <label class="flex items-center gap-1 text-sm text-gray-600 cursor-pointer">
+        <input type="checkbox" id="filter-archived" onchange="loadQuestions()" class="accent-indigo-600">
+        含封存題
+      </label>
     </div>
     <div id="questions-table" class="bg-white rounded-xl shadow overflow-hidden">
       <div class="text-center py-8 text-gray-400">載入中...</div>
@@ -589,6 +598,10 @@ body{font-family:'Noto Sans TC',sans-serif;}
             <input id="rand-count" type="number" value="10" min="1" max="100" class="border border-gray-300 rounded px-2 py-1 text-sm w-16">
           </div>
           <button onclick="randomPickQuestions()" class="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-sm rounded-lg font-medium transition-colors">隨機抽題</button>
+          <label class="flex items-center gap-1 text-xs text-gray-600 cursor-pointer">
+            <input type="checkbox" id="rand-weighted" class="accent-amber-500">
+            依答錯次數加權
+          </label>
         </div>
         <p id="rand-msg" class="text-xs text-gray-500 mt-2 hidden"></p>
       </div>
@@ -680,11 +693,13 @@ async function loadQuestions(page = 1) {
   const d = document.getElementById('filter-diff').value;
   const g = document.getElementById('filter-grade').value;
   const q = document.getElementById('filter-search').value;
+  const archived = document.getElementById('filter-archived')?.checked;
   if (s) params.set('subject_id', s);
   if (t) params.set('type', t);
   if (d) params.set('difficulty', d);
   if (g) params.set('grade_level', g);
   if (q) params.set('search', q);
+  if (archived) params.set('include_archived', '1');
   params.set('page', page); params.set('limit', 20);
 
   const res = await fetch('/api/questions?' + params);
@@ -692,14 +707,16 @@ async function loadQuestions(page = 1) {
   const typeLabel = {choice:'選擇題',fill:'填充題',calculation:'計算題'};
   const gradeLabel = {junior_high:'升國中',elementary_6:'國小六年級'};
   const tbody = data.data.map(q => \`
-    <tr class="hover:bg-gray-50 border-b border-gray-100">
-      <td class="px-4 py-3 text-sm text-gray-500">\${q.id}</td>
+    <tr class="hover:bg-gray-50 border-b border-gray-100 \${q.is_archived ? 'opacity-50' : ''}">
+      <td class="px-4 py-3 text-sm text-gray-500">\${q.id}\${q.is_archived ? ' <span class="text-xs bg-gray-200 text-gray-500 px-1 py-0.5 rounded">已封存</span>' : ''}</td>
       <td class="px-4 py-3"><span class="bg-indigo-50 text-indigo-700 text-xs px-2 py-0.5 rounded">\${q.subject_name}</span></td>
       <td class="px-4 py-3 text-sm">\${typeLabel[q.type]||q.type}</td>
       <td class="px-4 py-3 text-sm">\${'★'.repeat(q.difficulty)}</td>
       <td class="px-4 py-3 text-sm"><span class="\${q.grade_level==='elementary_6'?'bg-green-50 text-green-700':'bg-blue-50 text-blue-700'} text-xs px-2 py-0.5 rounded">\${gradeLabel[q.grade_level]||q.grade_level}</span></td>
       <td class="px-4 py-3 text-sm text-gray-800 max-w-xs truncate">\${q.content}</td>
       <td class="px-4 py-3 text-sm text-gray-500">\${q.tags||''}</td>
+      <td class="px-4 py-3 text-sm text-center"><span class="text-green-600 font-medium">\${q.correct_count||0}</span></td>
+      <td class="px-4 py-3 text-sm text-center"><span class="text-red-500 font-medium">\${q.wrong_count||0}</span></td>
       <td class="px-4 py-3">
         <div class="flex gap-2">
           <button onclick="editQuestion(\${q.id})" class="text-xs bg-blue-50 text-blue-600 hover:bg-blue-100 px-2 py-1 rounded transition-colors">編輯</button>
@@ -712,8 +729,8 @@ async function loadQuestions(page = 1) {
   document.getElementById('questions-table').innerHTML = \`
     <div class="px-4 py-3 bg-gray-50 border-b text-sm text-gray-500">共 \${data.total} 道題目</div>
     <table class="w-full"><thead class="bg-gray-50 text-xs text-gray-500 uppercase">
-      <tr><th class="px-4 py-3 text-left">ID</th><th class="px-4 py-3 text-left">科目</th><th class="px-4 py-3 text-left">題型</th><th class="px-4 py-3 text-left">難度</th><th class="px-4 py-3 text-left">學段</th><th class="px-4 py-3 text-left">題目</th><th class="px-4 py-3 text-left">標籤</th><th class="px-4 py-3 text-left">操作</th></tr>
-    </thead><tbody>\${tbody || '<tr><td colspan="8" class="text-center py-8 text-gray-400">沒有題目</td></tr>'}</tbody></table>
+      <tr><th class="px-4 py-3 text-left">ID</th><th class="px-4 py-3 text-left">科目</th><th class="px-4 py-3 text-left">題型</th><th class="px-4 py-3 text-left">難度</th><th class="px-4 py-3 text-left">學段</th><th class="px-4 py-3 text-left">題目</th><th class="px-4 py-3 text-left">標籤</th><th class="px-4 py-3 text-left text-green-600">✓答對</th><th class="px-4 py-3 text-left text-red-500">✗答錯</th><th class="px-4 py-3 text-left">操作</th></tr>
+    </thead><tbody>\${tbody || '<tr><td colspan="10" class="text-center py-8 text-gray-400">沒有題目</td></tr>'}</tbody></table>
   \`;
 
   const pages = Math.ceil(data.total / 20);
@@ -876,12 +893,14 @@ async function randomPickQuestions() {
   const dMin = document.getElementById('rand-diff-min').value;
   const dMax = document.getElementById('rand-diff-max').value;
   const cnt  = parseInt(document.getElementById('rand-count').value) || 10;
+  const weighted = document.getElementById('rand-weighted')?.checked;
   if (s)    params.set('subject_id', s);
   if (g)    params.set('grade_level', g);
   if (t)    params.set('type', t);
   if (dMin) params.set('difficulty_min', dMin);
   if (dMax) params.set('difficulty_max', dMax);
   params.set('count', cnt);
+  if (weighted) params.set('weighted', '1');
   const res = await fetch('/api/questions/random?' + params);
   const questions = await res.json();
   let added = 0;
@@ -1091,6 +1110,8 @@ const aiGenerateHtml = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI 出題 - 數理資優班考題系統</title>
 <script src="https://cdn.tailwindcss.com"></script>
+<script>MathJax = { tex: { inlineMath: [['$','$'],['\\\\(','\\\\)']], displayMath: [['$$','$$'],['\\\\[','\\\\]']] } };</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" id="MathJax-script" async></script>
 <style>body{font-family:'Noto Sans TC',sans-serif;}</style>
 </head>
 <body class="bg-gray-50 min-h-screen">
@@ -1135,7 +1156,7 @@ const aiGenerateHtml = `<!DOCTYPE html>
         <label class="block text-sm font-medium text-gray-600 mb-1">LLM 提供者</label>
         <select id="provider" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
           <option value="openai">OpenAI (GPT-4o-mini)</option>
-          <option value="gemini">Google Gemini 1.5 Flash</option>
+          <option value="gemini" selected>Google Gemini 2.5 Flash</option>
           <option value="claude">Anthropic Claude 3.5 Haiku</option>
         </select>
       </div>
@@ -1306,6 +1327,7 @@ function renderPreview(questions) {
     </div>
   \`).join('');
   updateSaveCount();
+  if (window.MathJax) MathJax.typesetPromise([area]);
 }
 
 function updateSaveCount() {
@@ -1353,6 +1375,166 @@ loadSubjects();
 </body>
 </html>`;
 
+const analysisHtml = `<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>答題分析報告 - 數理資優班考題系統</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>body{font-family:'Noto Sans TC',sans-serif;}</style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+<header class="bg-emerald-700 text-white py-4 px-6 shadow">
+  <div class="max-w-4xl mx-auto flex items-center gap-3">
+    <a href="/" class="text-emerald-200 hover:text-white">🏠</a>
+    <span class="text-lg font-bold">📊 答題分析報告</span>
+  </div>
+</header>
+<main class="max-w-4xl mx-auto px-4 py-8" id="analysis-container">
+  <div class="text-center py-16 text-gray-500">載入中...</div>
+</main>
+<script>
+const id = new URLSearchParams(location.search).get('id');
+
+async function loadAnalysis() {
+  const res = await fetch('/api/submissions/' + id + '/analysis');
+  if (!res.ok) {
+    document.getElementById('analysis-container').innerHTML = '<p class="text-center py-16 text-red-500">找不到分析資料</p>';
+    return;
+  }
+  const d = await res.json();
+  const pct = d.percentage;
+  const pctColor = pct >= 80 ? 'text-green-600' : pct >= 60 ? 'text-yellow-600' : 'text-red-600';
+  const pctBg    = pct >= 80 ? 'bg-green-50 border-green-200' : pct >= 60 ? 'bg-yellow-50 border-yellow-200' : 'bg-red-50 border-red-200';
+  const diffLabel = {1:'★ 入門',2:'★★ 基礎',3:'★★★ 中級',4:'★★★★ 進階',5:'★★★★★ 競賽'};
+
+  // 科目進度條
+  const subjectBars = Object.entries(d.by_subject).map(([name, v]) => {
+    const rate = v.total ? Math.round(v.correct * 100 / v.total) : 0;
+    const barColor = rate >= 80 ? 'bg-green-500' : rate >= 60 ? 'bg-yellow-400' : 'bg-red-400';
+    return \`
+      <div class="mb-3">
+        <div class="flex justify-between text-sm mb-1">
+          <span class="font-medium text-gray-700">\${name}</span>
+          <span class="text-gray-500">\${v.correct}/\${v.total} 題答對（\${rate}%）</span>
+        </div>
+        <div class="w-full bg-gray-200 rounded-full h-3">
+          <div class="\${barColor} h-3 rounded-full transition-all" style="width:\${rate}%"></div>
+        </div>
+      </div>
+    \`;
+  }).join('');
+
+  // 難度分布
+  const diffRows = Object.entries(d.by_difficulty)
+    .filter(([, v]) => v.total > 0)
+    .map(([diff, v]) => {
+      const rate = Math.round(v.correct * 100 / v.total);
+      const c = rate >= 80 ? 'text-green-600' : rate >= 60 ? 'text-yellow-600' : 'text-red-600';
+      return \`
+        <tr class="border-b border-gray-100">
+          <td class="px-4 py-2 text-sm text-gray-700">\${diffLabel[diff]||diff}</td>
+          <td class="px-4 py-2 text-sm text-center">\${v.total}</td>
+          <td class="px-4 py-2 text-sm text-center text-green-600">\${v.correct}</td>
+          <td class="px-4 py-2 text-sm text-center text-red-500">\${v.wrong}</td>
+          <td class="px-4 py-2 text-sm text-center font-bold \${c}">\${rate}%</td>
+        </tr>
+      \`;
+    }).join('');
+
+  // 弱點題目
+  const weakHtml = d.weak_questions.length ? d.weak_questions.map((q, i) => \`
+    <div class="bg-white rounded-xl shadow p-5 border-l-4 border-red-400 mb-3">
+      <div class="flex justify-between mb-2">
+        <span class="text-sm font-medium text-gray-500">第 \${i+1} 題 · \${q.subject_name} · \${'★'.repeat(q.difficulty||1)}</span>
+        <span class="text-xs text-red-500">✗ 答錯</span>
+      </div>
+      <p class="text-gray-800 mb-2">\${q.content}</p>
+      <div class="text-sm space-y-1">
+        \${q.type==='choice'?[\`<p>你的答案：<span class="text-red-500 font-medium">\${q.given_answer||'（未作答）'}</span></p>\`,\`<p>正確答案：<span class="text-green-600 font-medium">\${q.correct_answer}</span></p>\`].join(''):\`<p>你的答案：<span class="text-red-500 font-medium">\${q.given_answer||'（未作答）'}</span></p><p>正確答案：<span class="text-green-600 font-medium">\${q.correct_answer}</span></p>\`}
+        \${q.explanation ? \`<p class="text-gray-500 mt-2 bg-gray-50 p-2 rounded">💡 \${q.explanation}</p>\` : ''}
+      </div>
+    </div>
+  \`).join('') : '<p class="text-gray-400 text-center py-4">🎉 全部答對，沒有弱點題目！</p>';
+
+  document.getElementById('analysis-container').innerHTML = \`
+    <!-- 頂部概覽 -->
+    <div class="bg-white rounded-2xl shadow-lg p-8 mb-6 \${pctBg} border">
+      <div class="text-center mb-4">
+        <h2 class="text-2xl font-bold text-gray-800 mb-1">\${d.student_name} 的答題分析報告</h2>
+        <p class="text-gray-500 text-sm">\${d.exam_title} ｜ \${d.submitted_at}</p>
+      </div>
+      <div class="flex justify-center gap-12 mt-6">
+        <div class="text-center">
+          <div class="text-5xl font-bold \${pctColor}">\${pct}%</div>
+          <p class="text-gray-500 text-sm mt-1">得分率</p>
+        </div>
+        <div class="text-center">
+          <div class="text-4xl font-bold text-gray-700">\${d.score}/\${d.total_score}</div>
+          <p class="text-gray-500 text-sm mt-1">得分</p>
+        </div>
+        <div class="text-center">
+          <div class="text-4xl font-bold text-green-600">\${d.correct_count}</div>
+          <p class="text-gray-500 text-sm mt-1">答對</p>
+        </div>
+        <div class="text-center">
+          <div class="text-4xl font-bold text-red-500">\${d.wrong_count}</div>
+          <p class="text-gray-500 text-sm mt-1">答錯</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 科目表現 -->
+    <div class="bg-white rounded-2xl shadow p-6 mb-6">
+      <h3 class="text-lg font-bold text-gray-800 mb-4">📚 各科目表現</h3>
+      \${subjectBars || '<p class="text-gray-400">無科目資料</p>'}
+    </div>
+
+    <!-- 難度分布 -->
+    <div class="bg-white rounded-2xl shadow p-6 mb-6">
+      <h3 class="text-lg font-bold text-gray-800 mb-4">🎯 難度分布</h3>
+      \${diffRows ? \`
+        <table class="w-full">
+          <thead class="bg-gray-50 text-xs text-gray-500 uppercase">
+            <tr>
+              <th class="px-4 py-2 text-left">難度</th>
+              <th class="px-4 py-2 text-center">共</th>
+              <th class="px-4 py-2 text-center">答對</th>
+              <th class="px-4 py-2 text-center">答錯</th>
+              <th class="px-4 py-2 text-center">正確率</th>
+            </tr>
+          </thead>
+          <tbody>\${diffRows}</tbody>
+        </table>
+      \` : '<p class="text-gray-400">無難度資料</p>'}
+    </div>
+
+    <!-- 學習建議 -->
+    <div class="bg-blue-50 border border-blue-200 rounded-2xl p-6 mb-6">
+      <h3 class="text-lg font-bold text-blue-800 mb-3">💡 學習建議</h3>
+      \${d.suggestions.map(s => \`<p class="text-blue-700 mb-1">• \${s}</p>\`).join('')}
+    </div>
+
+    <!-- 弱點題目清單 -->
+    <div class="mb-6">
+      <h3 class="text-lg font-bold text-gray-800 mb-4">🔍 弱點題目（答錯題目詳析）</h3>
+      \${weakHtml}
+    </div>
+
+    <!-- 底部按鈕 -->
+    <div class="mt-6 flex gap-4 justify-center">
+      <a href="/result.html?id=\${id}" class="bg-gray-600 hover:bg-gray-700 text-white px-6 py-3 rounded-lg font-medium transition-colors">← 返回成績頁</a>
+      <a href="/exam-list.html" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-lg font-medium transition-colors">返回考試列表</a>
+    </div>
+  \`;
+}
+
+loadAnalysis();
+</script>
+</body>
+</html>`;
+
 const files = {
   'public/index.html':       indexHtml,
   'public/exam-list.html':   examListHtml,
@@ -1361,6 +1543,7 @@ const files = {
   'public/admin.html':       adminHtml,
   'public/results.html':     resultsHtml,
   'public/ai-generate.html': aiGenerateHtml,
+  'public/analysis.html':    analysisHtml,
 };
 
 for (const [filepath, content] of Object.entries(files)) {

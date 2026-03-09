@@ -9,8 +9,9 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS subjects (
     id   INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE,
-    code TEXT NOT NULL UNIQUE
+    name TEXT NOT NULL,
+    code TEXT NOT NULL UNIQUE,
+    UNIQUE(name, grade_level)
   );
 
   CREATE TABLE IF NOT EXISTS questions (
@@ -69,6 +70,20 @@ db.exec(`
   );
 `);
 
+// Migration: add correct_count, wrong_count, is_archived columns to questions if not exists
+{
+  const qCols = db.prepare("PRAGMA table_info(questions)").all().map(c => c.name);
+  if (!qCols.includes('correct_count')) {
+    db.exec(`ALTER TABLE questions ADD COLUMN correct_count INTEGER DEFAULT 0`);
+  }
+  if (!qCols.includes('wrong_count')) {
+    db.exec(`ALTER TABLE questions ADD COLUMN wrong_count INTEGER DEFAULT 0`);
+  }
+  if (!qCols.includes('is_archived')) {
+    db.exec(`ALTER TABLE questions ADD COLUMN is_archived INTEGER DEFAULT 0`);
+  }
+}
+
 // Migration: add grade_level column to questions if not exists
 const cols = db.prepare("PRAGMA table_info(questions)").all().map(c => c.name);
 if (!cols.includes('grade_level')) {
@@ -81,9 +96,9 @@ if (!subjectCols.includes('grade_level')) {
   db.exec(`ALTER TABLE subjects ADD COLUMN grade_level TEXT NOT NULL DEFAULT 'junior_high'`);
   // 將國小六年級科目標記為 elementary_6
   db.exec(`UPDATE subjects SET grade_level = 'elementary_6' WHERE code IN ('CHN','ENG','SOC','NAT')`);
-  // 新增「國小數學」科目
-  db.prepare(`INSERT OR IGNORE INTO subjects (name, code, grade_level) VALUES ('國小數學','MATH_E','elementary_6')`).run();
-  // 將原本 grade_level='elementary_6' 且 subject_id 指向「數學(MATH)」的題目，改連結到「國小數學(MATH_E)」
+  // 新增「數學（國小）」科目
+  db.prepare(`INSERT OR IGNORE INTO subjects (name, code, grade_level) VALUES ('數學','MATH_E','elementary_6')`).run();
+  // 將原本 grade_level='elementary_6' 且 subject_id 指向「數學(MATH)」的題目，改連結到「數學(MATH_E)」
   const mathRow  = db.prepare(`SELECT id FROM subjects WHERE code = 'MATH'`).get();
   const mathERow = db.prepare(`SELECT id FROM subjects WHERE code = 'MATH_E'`).get();
   if (mathRow && mathERow) {
@@ -107,7 +122,7 @@ const insertSubject = db.prepare(`INSERT OR IGNORE INTO subjects (name, code, gr
   ['英語',     'ENG',   'elementary_6'],
   ['社會',     'SOC',   'elementary_6'],
   ['自然',     'NAT',   'elementary_6'],
-  ['國小數學', 'MATH_E','elementary_6'],
+  ['數學',     'MATH_E','elementary_6'],
 ].forEach(([name, code, grade_level]) => insertSubject.run(name, code, grade_level));
 
 module.exports = db;

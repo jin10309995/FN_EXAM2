@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI 出題 - 數理資優班考題系統</title>
 <script src="https://cdn.tailwindcss.com"></script>
+<script>MathJax = { tex: { inlineMath: [['$','$'],['\\(','\\)']], displayMath: [['$$','$$'],['\\[','\\]']] } };</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" id="MathJax-script" async></script>
 <style>body{font-family:'Noto Sans TC',sans-serif;}</style>
 </head>
 <body class="bg-gray-50 min-h-screen">
@@ -49,7 +51,7 @@
         <label class="block text-sm font-medium text-gray-600 mb-1">LLM 提供者</label>
         <select id="provider" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
           <option value="openai">OpenAI (GPT-4o-mini)</option>
-          <option value="gemini">Google Gemini 1.5 Flash</option>
+          <option value="gemini" selected>Google Gemini 2.5 Flash</option>
           <option value="claude">Anthropic Claude 3.5 Haiku</option>
         </select>
       </div>
@@ -220,6 +222,7 @@ function renderPreview(questions) {
     </div>
   `).join('');
   updateSaveCount();
+  if (window.MathJax) MathJax.typesetPromise([area]);
 }
 
 function updateSaveCount() {
