@@ -364,6 +364,7 @@ body{font-family:'Noto Sans TC',sans-serif;}
       <button class="tab-btn active px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30" onclick="switchTab('questions',this)">題庫管理</button>
       <button class="tab-btn px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30 text-indigo-200" onclick="switchTab('exams',this)">試卷管理</button>
       <button class="tab-btn px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30 text-indigo-200" onclick="switchTab('stats',this)">成績統計</button>
+      <button class="tab-btn px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30 text-indigo-200" onclick="switchTab('ml',this)">🧠 ML 分析</button>
     </div>
   </div>
 </header>
@@ -376,9 +377,13 @@ body{font-family:'Noto Sans TC',sans-serif;}
       <select id="filter-grade" onchange="onFilterGradeChange()" class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
         <option value="">全部學段</option>
         <option value="elementary_6">國小六年級</option>
-        <option value="junior_high">升國中</option>
+        <option value="junior_high">升國中（資優班）</option>
+        <option value="grade_7">國一（七年級）</option>
+        <option value="grade_8">國二（八年級）</option>
+        <option value="grade_9">國三（九年級）</option>
+        <option value="bctest">國中教育會考</option>
       </select>
-      <select id="filter-subject" onchange="loadQuestions()" class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
+      <select id="filter-subject" onchange="loadQuestions()"class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
         <option value="">全部科目</option>
       </select>
       <select id="filter-type" onchange="loadQuestions()" class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
@@ -426,6 +431,92 @@ body{font-family:'Noto Sans TC',sans-serif;}
     </div>
     <div id="stats-container"></div>
   </div>
+
+  <!-- ML 分析 -->
+  <div id="tab-ml" class="hidden">
+    <div class="flex gap-2 mb-5 flex-wrap">
+      <button id="mlbtn-quality" onclick="switchMlTab('quality')" class="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white transition-colors">🔍 題目品質分析</button>
+      <button id="mlbtn-calibration" onclick="switchMlTab('calibration')" class="px-4 py-2 rounded-lg text-sm font-medium bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors">📊 難度校正</button>
+      <button id="mlbtn-ability" onclick="switchMlTab('ability')" class="px-4 py-2 rounded-lg text-sm font-medium bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors">🧠 學生能力查詢</button>
+    </div>
+
+    <!-- 題目品質分析 -->
+    <div id="ml-quality">
+      <div class="flex gap-3 mb-4 items-end flex-wrap">
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">最少作答次數</label>
+          <input id="ml-min-attempts" type="number" value="3" min="1" class="border border-gray-300 rounded-lg px-3 py-2 text-sm w-24">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">學段</label>
+          <select id="ml-grade" class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
+            <option value="">全部</option>
+            <option value="junior_high">升國中（資優班）</option>
+            <option value="elementary_6">國小六年級</option>
+            <option value="grade_7">國一（七年級）</option>
+            <option value="grade_8">國二（八年級）</option>
+            <option value="grade_9">國三（九年級）</option>
+            <option value="bctest">國中教育會考</option>
+          </select>
+        </div>
+        <button onclick="loadQualityReport()"class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">載入報表</button>
+        <label class="flex items-center gap-1 text-sm text-gray-600 cursor-pointer">
+          <input type="checkbox" id="ml-needs-review-only" class="accent-indigo-600">
+          只顯示需審查
+        </label>
+      </div>
+      <div id="ml-quality-summary" class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4"></div>
+      <div id="ml-quality-table" class="bg-white rounded-xl shadow overflow-hidden">
+        <div class="text-center py-8 text-gray-400 text-sm">點擊「載入報表」開始分析</div>
+      </div>
+    </div>
+
+    <!-- 難度校正 -->
+    <div id="ml-calibration" class="hidden">
+      <div class="flex gap-3 mb-4 items-end flex-wrap">
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">學段</label>
+          <select id="cal-grade" class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
+            <option value="">全部</option>
+            <option value="junior_high">升國中（資優班）</option>
+            <option value="elementary_6">國小六年級</option>
+            <option value="grade_7">國一（七年級）</option>
+            <option value="grade_8">國二（八年級）</option>
+            <option value="grade_9">國三（九年級）</option>
+            <option value="bctest">國中教育會考</option>
+          </select>
+        </div>
+        <button onclick="loadCalibration()"class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">載入報表</button>
+        <label class="flex items-center gap-1 text-sm text-gray-600 cursor-pointer">
+          <input type="checkbox" id="cal-anomalous-only" class="accent-indigo-600">
+          只顯示異常題目
+        </label>
+      </div>
+      <div id="cal-summary" class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4"></div>
+      <div id="cal-table" class="bg-white rounded-xl shadow overflow-hidden">
+        <div class="text-center py-8 text-gray-400 text-sm">點擊「載入報表」開始分析</div>
+      </div>
+    </div>
+
+    <!-- 學生能力查詢 -->
+    <div id="ml-ability" class="hidden">
+      <div class="bg-white rounded-xl shadow p-5 mb-5">
+        <h4 class="font-semibold text-gray-700 mb-3">查詢學生能力檔案</h4>
+        <div class="flex gap-3 flex-wrap items-end">
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">學生姓名</label>
+            <input id="ability-student-name" type="text" placeholder="輸入學生姓名" class="border border-gray-300 rounded-lg px-3 py-2 text-sm w-40">
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">學生編號（選填）</label>
+            <input id="ability-student-id" type="text" placeholder="學號" class="border border-gray-300 rounded-lg px-3 py-2 text-sm w-32">
+          </div>
+          <button onclick="loadStudentAbility()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">查詢</button>
+        </div>
+      </div>
+      <div id="ability-result"></div>
+    </div>
+  </div>
 </main>
 
 <!-- 題目新增/編輯 Modal -->
@@ -439,6 +530,10 @@ body{font-family:'Noto Sans TC',sans-serif;}
           <select id="q-grade-level" onchange="onGradeLevelChange()" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" required>
             <option value="junior_high">升國中（資優班）</option>
             <option value="elementary_6">國小六年級</option>
+            <option value="grade_7">國一（七年級）</option>
+            <option value="grade_8">國二（八年級）</option>
+            <option value="grade_9">國三（九年級）</option>
+            <option value="bctest">國中教育會考</option>
           </select>
         </div>
         <div class="grid grid-cols-3 gap-3">
@@ -538,9 +633,13 @@ body{font-family:'Noto Sans TC',sans-serif;}
           <select id="eq-grade" onchange="onEqGradeChange()" class="border border-gray-300 rounded px-2 py-1 text-sm ml-auto">
             <option value="">全部學段</option>
             <option value="elementary_6">國小六年級</option>
-            <option value="junior_high">升國中</option>
+            <option value="junior_high">升國中（資優班）</option>
+            <option value="grade_7">國一（七年級）</option>
+            <option value="grade_8">國二（八年級）</option>
+            <option value="grade_9">國三（九年級）</option>
+            <option value="bctest">國中教育會考</option>
           </select>
-          <select id="eq-subject" onchange="loadExamQuestions()" class="border border-gray-300 rounded px-2 py-1 text-sm">
+          <select id="eq-subject"onchange="loadExamQuestions()" class="border border-gray-300 rounded px-2 py-1 text-sm">
             <option value="">全部科目</option>
           </select>
           <select id="eq-diff" onchange="loadExamQuestions()" class="border border-gray-300 rounded px-2 py-1 text-sm">
@@ -559,7 +658,11 @@ body{font-family:'Noto Sans TC',sans-serif;}
             <select id="rand-grade" onchange="onRandGradeChange()" class="border border-gray-300 rounded px-2 py-1 text-sm">
               <option value="">全部學段</option>
               <option value="elementary_6">國小六年級</option>
-              <option value="junior_high">升國中</option>
+              <option value="junior_high">升國中（資優班）</option>
+              <option value="grade_7">國一（七年級）</option>
+              <option value="grade_8">國二（八年級）</option>
+              <option value="grade_9">國三（九年級）</option>
+              <option value="bctest">國中教育會考</option>
             </select>
           </div>
           <div>
@@ -682,6 +785,182 @@ function switchTab(tab, btn) {
   btn.classList.add('active'); btn.classList.remove('text-indigo-200');
   if (tab === 'exams') loadExams();
   if (tab === 'stats') loadStatsExamList();
+  if (tab === 'ml') switchMlTab('quality');
+}
+
+function switchMlTab(tab) {
+  ['quality','calibration','ability'].forEach(t => {
+    document.getElementById('ml-' + t).classList.toggle('hidden', t !== tab);
+    const btn = document.getElementById('mlbtn-' + t);
+    if (t === tab) { btn.classList.replace('bg-gray-200','bg-indigo-600'); btn.classList.replace('text-gray-700','text-white'); }
+    else { btn.classList.replace('bg-indigo-600','bg-gray-200'); btn.classList.replace('text-white','text-gray-700'); }
+  });
+}
+
+// ── ML Analytics ─────────────────────────────────────────────────────────────
+const diffLabel5 = {1:'★ 入門',2:'★★ 基礎',3:'★★★ 中級',4:'★★★★ 進階',5:'★★★★★ 競賽'};
+
+function mlStat(label, value, sub, color='text-indigo-600') {
+  return \`<div class="bg-white rounded-xl shadow p-4 text-center">
+    <div class="text-2xl font-bold \${color}">\${value}</div>
+    <div class="text-sm font-medium text-gray-700 mt-1">\${label}</div>
+    \${sub ? \`<div class="text-xs text-gray-400 mt-0.5">\${sub}</div>\` : ''}
+  </div>\`;
+}
+
+async function loadQualityReport() {
+  const min = document.getElementById('ml-min-attempts').value || 3;
+  const grade = document.getElementById('ml-grade').value;
+  const reviewOnly = document.getElementById('ml-needs-review-only').checked;
+  const params = new URLSearchParams({ min_attempts: min });
+  if (grade) params.set('grade_level', grade);
+  const r = await fetch('/api/analytics/question-quality?' + params, { headers: { 'x-api-key': document.getElementById('api_key')?.value || '' } });
+  const data = await r.json();
+  if (!r.ok) { document.getElementById('ml-quality-table').innerHTML = \`<div class="text-center py-8 text-red-500">\${data.error}</div>\`; return; }
+
+  document.getElementById('ml-quality-summary').innerHTML = [
+    mlStat('分析題數', data.summary.total),
+    mlStat('需審查', data.summary.needs_review, '有品質問題', data.summary.needs_review > 0 ? 'text-red-500' : 'text-green-600'),
+    mlStat('平均通過率', (data.summary.avg_pass_rate || 0) + '%', '全部題目'),
+    mlStat('平均鑑別度', data.summary.avg_discrimination !== null ? data.summary.avg_discrimination : 'N/A', '越高越好（>0.4佳）')
+  ].join('');
+
+  const qs = reviewOnly ? data.questions.filter(q => q.needs_review) : data.questions;
+  if (!qs.length) {
+    document.getElementById('ml-quality-table').innerHTML = '<div class="text-center py-8 text-gray-400">無符合條件的題目</div>';
+    return;
+  }
+  document.getElementById('ml-quality-table').innerHTML = \`
+    <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 text-xs text-gray-500 uppercase">
+        <tr>
+          <th class="px-3 py-2 text-left">ID</th>
+          <th class="px-3 py-2 text-left">科目</th>
+          <th class="px-3 py-2">難度</th>
+          <th class="px-3 py-2">作答數</th>
+          <th class="px-3 py-2">通過率</th>
+          <th class="px-3 py-2">鑑別度</th>
+          <th class="px-3 py-2">品質分</th>
+          <th class="px-3 py-2 text-left">問題旗標</th>
+        </tr>
+      </thead>
+      <tbody>
+        \${qs.map(q => \`
+          <tr class="border-b border-gray-100 hover:bg-gray-50 \${q.needs_review ? 'bg-red-50' : ''}">
+            <td class="px-3 py-2 text-gray-500">#\${q.id}</td>
+            <td class="px-3 py-2"><span class="bg-indigo-50 text-indigo-700 text-xs px-2 py-0.5 rounded">\${q.subject_name}</span></td>
+            <td class="px-3 py-2 text-center text-xs">\${diffLabel5[q.difficulty]||q.difficulty}</td>
+            <td class="px-3 py-2 text-center">\${q.total_attempts}</td>
+            <td class="px-3 py-2 text-center \${q.pass_rate>70?'text-green-600':q.pass_rate<30?'text-red-500':'text-yellow-600'} font-medium">\${q.pass_rate}%</td>
+            <td class="px-3 py-2 text-center \${q.discrimination_index===null?'text-gray-400':q.discrimination_index>=0.3?'text-green-600':q.discrimination_index<0?'text-red-500':'text-yellow-600'}">\${q.discrimination_index !== null ? q.discrimination_index : '—'}</td>
+            <td class="px-3 py-2 text-center"><span class="px-2 py-0.5 rounded text-xs font-bold \${q.quality_score>=70?'bg-green-100 text-green-700':q.quality_score>=40?'bg-yellow-100 text-yellow-700':'bg-red-100 text-red-700'}">\${q.quality_score}</span></td>
+            <td class="px-3 py-2 text-xs text-red-600">\${q.quality_flags.join(' / ') || '—'}</td>
+          </tr>
+        \`).join('')}
+      </tbody>
+    </table>
+    </div>
+  \`;
+}
+
+async function loadCalibration() {
+  const grade = document.getElementById('cal-grade').value;
+  const anomalousOnly = document.getElementById('cal-anomalous-only').checked;
+  const params = new URLSearchParams();
+  if (grade) params.set('grade_level', grade);
+  const r = await fetch('/api/analytics/difficulty-calibration?' + params, { headers: { 'x-api-key': document.getElementById('api_key')?.value || '' } });
+  const data = await r.json();
+  if (!r.ok) { document.getElementById('cal-table').innerHTML = \`<div class="text-center py-8 text-red-500">\${data.error}</div>\`; return; }
+
+  document.getElementById('cal-summary').innerHTML = [
+    mlStat('總題數', data.summary.total),
+    mlStat('有資料', data.summary.with_data, '≥5次作答'),
+    mlStat('難度異常', data.summary.anomalous_count, '偏差≥2級', data.summary.anomalous_count > 0 ? 'text-red-500' : 'text-green-600'),
+  ].join('');
+
+  const qs = anomalousOnly ? data.questions.filter(q => q.is_anomalous) : data.questions.filter(q => q.total_attempts >= 1);
+  if (!qs.length) { document.getElementById('cal-table').innerHTML = '<div class="text-center py-8 text-gray-400">無符合條件的題目</div>'; return; }
+  document.getElementById('cal-table').innerHTML = \`
+    <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 text-xs text-gray-500 uppercase">
+        <tr>
+          <th class="px-3 py-2 text-left">ID</th>
+          <th class="px-3 py-2 text-left">科目</th>
+          <th class="px-3 py-2">標示難度</th>
+          <th class="px-3 py-2">實際難度</th>
+          <th class="px-3 py-2">通過率</th>
+          <th class="px-3 py-2">作答數</th>
+          <th class="px-3 py-2">偏差</th>
+          <th class="px-3 py-2 text-left min-w-48">題目摘要</th>
+        </tr>
+      </thead>
+      <tbody>
+        \${qs.map(q => \`
+          <tr class="border-b border-gray-100 hover:bg-gray-50 \${q.is_anomalous ? 'bg-orange-50' : ''}">
+            <td class="px-3 py-2 text-gray-500">#\${q.id}</td>
+            <td class="px-3 py-2"><span class="bg-indigo-50 text-indigo-700 text-xs px-2 py-0.5 rounded">\${q.subject_name}</span></td>
+            <td class="px-3 py-2 text-center text-xs">\${diffLabel5[q.labeled_difficulty]||q.labeled_difficulty}</td>
+            <td class="px-3 py-2 text-center text-xs \${q.empirical_difficulty===null?'text-gray-400':''}">\${q.empirical_difficulty !== null ? (diffLabel5[q.empirical_difficulty]||q.empirical_difficulty) : '—'}</td>
+            <td class="px-3 py-2 text-center">\${q.pass_rate !== null ? q.pass_rate + '%' : '—'}</td>
+            <td class="px-3 py-2 text-center">\${q.total_attempts}</td>
+            <td class="px-3 py-2 text-center font-bold \${q.deviation===null?'text-gray-400':q.is_anomalous?'text-red-500':Math.abs(q.deviation)>=1?'text-yellow-600':'text-gray-600'}">\${q.deviation !== null ? (q.deviation > 0 ? '+' : '') + q.deviation : '—'}</td>
+            <td class="px-3 py-2 text-xs text-gray-600 max-w-xs truncate">\${q.content}</td>
+          </tr>
+        \`).join('')}
+      </tbody>
+    </table>
+    </div>
+  \`;
+}
+
+async function loadStudentAbility() {
+  const name = document.getElementById('ability-student-name').value.trim();
+  const sid = document.getElementById('ability-student-id').value.trim();
+  if (!name && !sid) { alert('請輸入學生姓名或學號'); return; }
+  const params = new URLSearchParams();
+  if (name) params.set('student_name', name);
+  if (sid)  params.set('student_id', sid);
+  const r = await fetch('/api/analytics/student-ability?' + params, { headers: { 'x-api-key': document.getElementById('api_key')?.value || '' } });
+  const data = await r.json();
+  const el = document.getElementById('ability-result');
+  if (!r.ok) { el.innerHTML = \`<div class="bg-red-50 border border-red-200 rounded-xl p-4 text-red-600">\${data.error}</div>\`; return; }
+  const abilityColor = a => a >= 4 ? 'text-green-600' : a >= 2.5 ? 'text-yellow-600' : 'text-red-500';
+  const abilityBar = a => {
+    if (a === null) return '<div class="text-gray-400 text-xs">資料不足</div>';
+    const pct = Math.round((a - 1) / 4 * 100);
+    const c = a >= 4 ? 'bg-green-500' : a >= 2.5 ? 'bg-yellow-400' : 'bg-red-400';
+    return \`<div class="flex items-center gap-2"><div class="flex-1 bg-gray-200 rounded-full h-2"><div class="\${c} h-2 rounded-full" style="width:\${pct}%"></div></div><span class="text-xs font-bold w-8 \${abilityColor(a)}">\${a}</span></div>\`;
+  };
+  el.innerHTML = \`
+    <div class="bg-white rounded-2xl shadow-lg p-6">
+      <div class="flex items-center gap-4 mb-5 pb-4 border-b">
+        <div class="text-4xl">🧑‍🎓</div>
+        <div>
+          <div class="text-xl font-bold text-gray-800">\${data.student_name || data.student_id}</div>
+          <div class="text-gray-500 text-sm">共 \${data.exam_count} 份考卷 · \${data.total_responses} 題作答紀錄</div>
+        </div>
+        <div class="ml-auto text-center">
+          <div class="text-3xl font-bold \${abilityColor(data.overall_ability)}">\${data.overall_ability ?? '—'}</div>
+          <div class="text-xs text-gray-500">綜合能力值（1–5）</div>
+        </div>
+      </div>
+      <h4 class="font-semibold text-gray-700 mb-3">各科能力分布</h4>
+      <div class="space-y-3">
+        \${data.ability_profile.map(p => \`
+          <div>
+            <div class="flex justify-between text-sm mb-1">
+              <span class="font-medium text-gray-700">\${p.subject_name}</span>
+              <span class="text-gray-500 text-xs">\${p.correct_count}/\${p.sample_size} 答對（\${p.pass_rate}%），\${p.sample_size} 題</span>
+            </div>
+            \${abilityBar(p.ability)}
+          </div>
+        \`).join('')}
+      </div>
+      <p class="text-xs text-gray-400 mt-4">* 能力值採用 Rasch 模型（IRT）估算，1=最低，5=最高。樣本數越多越準確。</p>
+    </div>
+  \`;
 }
 
 // ── Questions ─────────────────────────────────────────────────────────────
@@ -705,14 +984,15 @@ async function loadQuestions(page = 1) {
   const res = await fetch('/api/questions?' + params);
   const data = await res.json();
   const typeLabel = {choice:'選擇題',fill:'填充題',calculation:'計算題'};
-  const gradeLabel = {junior_high:'升國中',elementary_6:'國小六年級'};
+  const gradeLabel = {junior_high:'升國中',elementary_6:'國小六年級',grade_7:'國一',grade_8:'國二',grade_9:'國三',bctest:'會考'};
+  const gradeCls = {elementary_6:'bg-green-50 text-green-700',junior_high:'bg-blue-50 text-blue-700',grade_7:'bg-purple-50 text-purple-700',grade_8:'bg-orange-50 text-orange-700',grade_9:'bg-red-50 text-red-700',bctest:'bg-yellow-50 text-yellow-700'};
   const tbody = data.data.map(q => \`
     <tr class="hover:bg-gray-50 border-b border-gray-100 \${q.is_archived ? 'opacity-50' : ''}">
       <td class="px-4 py-3 text-sm text-gray-500">\${q.id}\${q.is_archived ? ' <span class="text-xs bg-gray-200 text-gray-500 px-1 py-0.5 rounded">已封存</span>' : ''}</td>
       <td class="px-4 py-3"><span class="bg-indigo-50 text-indigo-700 text-xs px-2 py-0.5 rounded">\${q.subject_name}</span></td>
       <td class="px-4 py-3 text-sm">\${typeLabel[q.type]||q.type}</td>
       <td class="px-4 py-3 text-sm">\${'★'.repeat(q.difficulty)}</td>
-      <td class="px-4 py-3 text-sm"><span class="\${q.grade_level==='elementary_6'?'bg-green-50 text-green-700':'bg-blue-50 text-blue-700'} text-xs px-2 py-0.5 rounded">\${gradeLabel[q.grade_level]||q.grade_level}</span></td>
+      <td class="px-4 py-3 text-sm"><span class="\${gradeCls[q.grade_level]||'bg-gray-50 text-gray-700'} text-xs px-2 py-0.5 rounded">\${gradeLabel[q.grade_level]||q.grade_level}</span></td>
       <td class="px-4 py-3 text-sm text-gray-800 max-w-xs truncate">\${q.content}</td>
       <td class="px-4 py-3 text-sm text-gray-500">\${q.tags||''}</td>
       <td class="px-4 py-3 text-sm text-center"><span class="text-green-600 font-medium">\${q.correct_count||0}</span></td>
@@ -1164,8 +1444,12 @@ const aiGenerateHtml = `<!DOCTYPE html>
       <div>
         <label class="block text-sm font-medium text-gray-600 mb-1">學段</label>
         <select id="grade_level" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" onchange="loadSubjects()">
-          <option value="junior_high">升國中</option>
+          <option value="junior_high">升國中（資優班）</option>
           <option value="elementary_6">國小六年級</option>
+          <option value="grade_7">國一（七年級）</option>
+          <option value="grade_8">國二（八年級）</option>
+          <option value="grade_9">國三（九年級）</option>
+          <option value="bctest">國中教育會考</option>
         </select>
       </div>
 
@@ -1515,6 +1799,32 @@ async function loadAnalysis() {
       <h3 class="text-lg font-bold text-blue-800 mb-3">💡 學習建議</h3>
       \${d.suggestions.map(s => \`<p class="text-blue-700 mb-1">• \${s}</p>\`).join('')}
     </div>
+
+    <!-- 能力估算（Rasch Model） -->
+    \${d.ability_profile && d.ability_profile.length ? \`
+    <div class="bg-white rounded-2xl shadow p-6 mb-6">
+      <h3 class="text-lg font-bold text-gray-800 mb-1">🧠 能力估算</h3>
+      <p class="text-xs text-gray-400 mb-4">以 Rasch IRT 模型依本次作答估算各科能力值（1–5）。樣本數越多越準確。</p>
+      \${d.ability_profile.map(p => {
+        const pct = p.ability !== null ? Math.round((p.ability - 1) / 4 * 100) : 0;
+        const c = p.ability >= 4 ? 'bg-green-500' : p.ability >= 2.5 ? 'bg-yellow-400' : 'bg-red-400';
+        const tc = p.ability >= 4 ? 'text-green-600' : p.ability >= 2.5 ? 'text-yellow-600' : 'text-red-500';
+        return \`<div class="mb-3">
+          <div class="flex justify-between text-sm mb-1">
+            <span class="font-medium text-gray-700">\${p.subject_name}</span>
+            <span class="font-bold \${tc}">\${p.ability !== null ? p.ability + ' / 5' : '資料不足'} <span class="text-xs font-normal text-gray-400">(\${p.sample_size} 題)</span></span>
+          </div>
+          <div class="w-full bg-gray-200 rounded-full h-3">
+            <div class="\${c} h-3 rounded-full transition-all" style="width:\${pct}%"></div>
+          </div>
+        </div>\`;
+      }).join('')}
+      <div class="mt-3 pt-3 border-t flex justify-between items-center">
+        <span class="text-sm text-gray-600">綜合能力值</span>
+        <span class="text-2xl font-bold \${d.overall_ability >= 4 ? 'text-green-600' : d.overall_ability >= 2.5 ? 'text-yellow-600' : 'text-red-500'}">\${d.overall_ability !== null ? d.overall_ability + ' / 5' : '—'}</span>
+      </div>
+    </div>
+    \` : ''}
 
     <!-- 弱點題目清單 -->
     <div class="mb-6">

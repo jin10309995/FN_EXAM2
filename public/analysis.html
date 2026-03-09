@@ -139,6 +139,32 @@ async function loadAnalysis() {
       ${d.suggestions.map(s => `<p class="text-blue-700 mb-1">• ${s}</p>`).join('')}
     </div>
 
+    <!-- 能力估算（Rasch Model） -->
+    ${d.ability_profile && d.ability_profile.length ? `
+    <div class="bg-white rounded-2xl shadow p-6 mb-6">
+      <h3 class="text-lg font-bold text-gray-800 mb-1">🧠 能力估算</h3>
+      <p class="text-xs text-gray-400 mb-4">以 Rasch IRT 模型依本次作答估算各科能力值（1–5）。樣本數越多越準確。</p>
+      ${d.ability_profile.map(p => {
+        const pct = p.ability !== null ? Math.round((p.ability - 1) / 4 * 100) : 0;
+        const c = p.ability >= 4 ? 'bg-green-500' : p.ability >= 2.5 ? 'bg-yellow-400' : 'bg-red-400';
+        const tc = p.ability >= 4 ? 'text-green-600' : p.ability >= 2.5 ? 'text-yellow-600' : 'text-red-500';
+        return `<div class="mb-3">
+          <div class="flex justify-between text-sm mb-1">
+            <span class="font-medium text-gray-700">${p.subject_name}</span>
+            <span class="font-bold ${tc}">${p.ability !== null ? p.ability + ' / 5' : '資料不足'} <span class="text-xs font-normal text-gray-400">(${p.sample_size} 題)</span></span>
+          </div>
+          <div class="w-full bg-gray-200 rounded-full h-3">
+            <div class="${c} h-3 rounded-full transition-all" style="width:${pct}%"></div>
+          </div>
+        </div>`;
+      }).join('')}
+      <div class="mt-3 pt-3 border-t flex justify-between items-center">
+        <span class="text-sm text-gray-600">綜合能力值</span>
+        <span class="text-2xl font-bold ${d.overall_ability >= 4 ? 'text-green-600' : d.overall_ability >= 2.5 ? 'text-yellow-600' : 'text-red-500'}">${d.overall_ability !== null ? d.overall_ability + ' / 5' : '—'}</span>
+      </div>
+    </div>
+    ` : ''}
+
     <!-- 弱點題目清單 -->
     <div class="mb-6">
       <h3 class="text-lg font-bold text-gray-800 mb-4">🔍 弱點題目（答錯題目詳析）</h3>

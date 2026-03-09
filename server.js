@@ -114,8 +114,8 @@ app.post('/api/questions', requireAdmin, (req, res) => {
   const { subject_id, type, difficulty, content, option_a, option_b, option_c, option_d, answer, explanation, source, tags, grade_level = 'junior_high' } = req.body;
   if (!subject_id || !type || !difficulty || !content || !answer)
     return res.status(400).json({ error: '必填欄位不完整' });
-  if (!['elementary_6', 'junior_high'].includes(grade_level))
-    return res.status(400).json({ error: '學段值無效，請使用 elementary_6 或 junior_high' });
+  if (!['elementary_6', 'junior_high', 'grade_7', 'grade_8', 'grade_9', 'bctest'].includes(grade_level))
+    return res.status(400).json({ error: '學段值無效' });
   const r = db.prepare(`
     INSERT INTO questions (subject_id,type,difficulty,content,option_a,option_b,option_c,option_d,answer,explanation,source,tags,grade_level)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -125,8 +125,8 @@ app.post('/api/questions', requireAdmin, (req, res) => {
 
 app.put('/api/questions/:id', requireAdmin, (req, res) => {
   const { subject_id, type, difficulty, content, option_a, option_b, option_c, option_d, answer, explanation, source, tags, grade_level } = req.body;
-  if (grade_level && !['elementary_6', 'junior_high'].includes(grade_level))
-    return res.status(400).json({ error: '學段值無效，請使用 elementary_6 或 junior_high' });
+  if (grade_level && !['elementary_6', 'junior_high', 'grade_7', 'grade_8', 'grade_9', 'bctest'].includes(grade_level))
+    return res.status(400).json({ error: '學段值無效' });
   // 使用 COALESCE 支援部分欄位更新，未傳入的欄位保留原值
   const r = db.prepare(`
     UPDATE questions SET
@@ -264,7 +264,8 @@ app.post('/api/generate/questions', requireAdmin, async (req, res) => {
     if (!subject) return res.status(404).json({ error: '找不到指定科目' });
 
     const typeLabel = { choice: '單選題（A/B/C/D）', fill: '填空題', calculation: '計算題' }[type] || type;
-    const gradeLabel = grade_level === 'elementary_6' ? '國小六年級' : '升國中（七年級準備）';
+    const gradeLabelMap = {elementary_6:'國小六年級',junior_high:'升國中（資優班）',grade_7:'國一（七年級）',grade_8:'國二（八年級）',grade_9:'國三（九年級）',bctest:'國中教育會考'};
+    const gradeLabel = gradeLabelMap[grade_level] || '升國中（資優班）';
     const userPrompt = `請出 ${count} 題「${subject.name}」${gradeLabel}的${typeLabel}，難度 ${difficulty}/5（1 最易，5 最難）。${hint ? `\n補充要求：${hint}` : ''}`;
 
     const questions = await generateQuestions(provider, userPrompt);
@@ -309,7 +310,7 @@ app.post('/api/questions/batch', requireAdmin, (req, res) => {
     for (const q of items) {
       if (!q.subject_id || !q.type || !q.difficulty || !q.content || !q.answer)
         throw new Error('題目資料不完整，缺少必填欄位');
-      if (!['elementary_6', 'junior_high'].includes(q.grade_level || 'junior_high'))
+      if (!['elementary_6', 'junior_high', 'grade_7', 'grade_8', 'grade_9', 'bctest'].includes(q.grade_level || 'junior_high'))
         throw new Error('學段值無效');
       const r = ins.run(
         q.subject_id, q.type, q.difficulty, q.content,
@@ -400,7 +401,8 @@ async function archiveAndReplace() {
     // 嘗試 LLM 自動生成替換題
     const newDiff = Math.min(q.difficulty + 1, 5);
     const typeLabel = { choice: '單選題（A/B/C/D）', fill: '填空題', calculation: '計算題' }[q.type] || q.type;
-    const gradeLabel = q.grade_level === 'elementary_6' ? '國小六年級' : '升國中（七年級準備）';
+    const gradeLabelMap2 = {elementary_6:'國小六年級',junior_high:'升國中（資優班）',grade_7:'國一（七年級）',grade_8:'國二（八年級）',grade_9:'國三（九年級）',bctest:'國中教育會考'};
+    const gradeLabel = gradeLabelMap2[q.grade_level] || '升國中（資優班）';
     const prompt = `請出 1 題「${q.subject_name}」${gradeLabel}的${typeLabel}，難度 ${newDiff}/5（1 最易，5 最難）。請勿與以下題目重複：${q.content}`;
 
     try {
@@ -497,6 +499,20 @@ app.get('/api/submissions/:id/analysis', (req, res) => {
   else if (pct >= 70) suggestions.push('整體表現良好，繼續加油！');
   else suggestions.push('建議重新複習答錯的題目，加強基礎概念。');
 
+  // Rasch ability estimation per subject
+  const abilityBySubject = {};
+  details.forEach(d => {
+    if (!abilityBySubject[d.subject_name]) abilityBySubject[d.subject_name] = [];
+    abilityBySubject[d.subject_name].push({ difficulty: d.difficulty, is_correct: d.is_correct });
+  });
+  const ability_profile = Object.entries(abilityBySubject).map(([name, responses]) => ({
+    subject_name: name,
+    ability: estimateAbilityRasch(responses),
+    sample_size: responses.length,
+    pass_rate: Math.round(responses.filter(r => r.is_correct).length / responses.length * 100)
+  }));
+  const overall_ability = estimateAbilityRasch(details.map(d => ({ difficulty: d.difficulty, is_correct: d.is_correct })));
+
   res.json({
     submission_id: sub.id,
     student_name: sub.student_name,
@@ -512,7 +528,9 @@ app.get('/api/submissions/:id/analysis', (req, res) => {
     by_subject: bySubject,
     by_difficulty: byDifficulty,
     weak_questions: weakQuestions,
-    suggestions
+    suggestions,
+    ability_profile,
+    overall_ability
   });
 });
 
@@ -543,6 +561,285 @@ app.get('/api/exams/:id/stats', requireAdmin, (req, res) => {
     GROUP BY ad.question_id ORDER BY wrong_count DESC LIMIT 5
   `).all(req.params.id);
   res.json({ ...stats, most_wrong: wrongMost });
+});
+
+// ─── ML Analytics ────────────────────────────────────────────────────────────
+
+// Rasch model: estimate student ability θ from a list of {difficulty, is_correct} responses.
+// Maps difficulty 1-5 to logit scale: β = (difficulty - 3) * 1.5
+// Returns ability on 1-5 display scale (1 decimal place).
+function estimateAbilityRasch(responses) {
+  if (!responses || responses.length === 0) return null;
+  const items = responses.map(r => ({ beta: (r.difficulty - 3) * 1.5, correct: r.is_correct ? 1 : 0 }));
+  const totalCorrect = items.reduce((s, i) => s + i.correct, 0);
+  if (totalCorrect === 0) return 1.0;
+  if (totalCorrect === items.length) return 5.0;
+  let theta = 0;
+  for (let iter = 0; iter < 100; iter++) {
+    let grad = 0, hess = 0;
+    for (const item of items) {
+      const p = 1 / (1 + Math.exp(item.beta - theta));
+      grad += item.correct - p;
+      hess -= p * (1 - p);
+    }
+    if (Math.abs(hess) < 1e-10) break;
+    const delta = -grad / hess;
+    theta += delta;
+    if (Math.abs(delta) < 1e-6) break;
+  }
+  theta = Math.max(-4.5, Math.min(4.5, theta));
+  return Math.round((theta / 1.5 + 3) * 10) / 10;
+}
+
+// GET difficulty calibration: compare labeled vs. empirical difficulty
+app.get('/api/analytics/difficulty-calibration', requireAdmin, (req, res) => {
+  const { subject_id, grade_level } = req.query;
+  const where = ['q.is_archived = 0'];
+  const params = [];
+  if (subject_id) { where.push('q.subject_id = ?'); params.push(subject_id); }
+  if (grade_level) { where.push('q.grade_level = ?'); params.push(grade_level); }
+  const questions = db.prepare(`
+    SELECT q.id, q.content, q.difficulty as labeled_difficulty,
+           q.correct_count, q.wrong_count,
+           q.subject_id, s.name as subject_name, q.grade_level,
+           (q.correct_count + q.wrong_count) as total_attempts
+    FROM questions q JOIN subjects s ON s.id = q.subject_id
+    WHERE ${where.join(' AND ')} ORDER BY q.subject_id, q.difficulty
+  `).all(...params);
+
+  const result = questions.map(q => {
+    let pass_rate = null, empirical_difficulty = null, deviation = null, is_anomalous = false;
+    if (q.total_attempts > 0) {
+      pass_rate = Math.round(q.correct_count * 100.0 / q.total_attempts * 10) / 10;
+      const pr = pass_rate / 100;
+      empirical_difficulty = pr >= 0.8 ? 1 : pr >= 0.6 ? 2 : pr >= 0.4 ? 3 : pr >= 0.2 ? 4 : 5;
+      deviation = empirical_difficulty - q.labeled_difficulty;
+      is_anomalous = Math.abs(deviation) >= 2 && q.total_attempts >= 5;
+    }
+    return { ...q, pass_rate, empirical_difficulty, deviation, is_anomalous };
+  });
+
+  const withData = result.filter(q => q.total_attempts >= 5);
+  const anomalous = withData.filter(q => q.is_anomalous);
+  const avgDev = withData.length
+    ? Math.round(withData.reduce((s, q) => s + Math.abs(q.deviation || 0), 0) / withData.length * 100) / 100
+    : 0;
+  res.json({ questions: result, summary: { total: result.length, with_data: withData.length, anomalous_count: anomalous.length, avg_deviation: avgDev } });
+});
+
+// GET question quality: pass rate + discrimination index
+app.get('/api/analytics/question-quality', requireAdmin, (req, res) => {
+  const min_attempts = Math.max(1, parseInt(req.query.min_attempts) || 3);
+  const { subject_id, grade_level } = req.query;
+  const where = ['q.is_archived = 0', `(q.correct_count + q.wrong_count) >= ${min_attempts}`];
+  const params = [];
+  if (subject_id) { where.push('q.subject_id = ?'); params.push(subject_id); }
+  if (grade_level) { where.push('q.grade_level = ?'); params.push(grade_level); }
+  const questions = db.prepare(`
+    SELECT q.id, q.content, q.difficulty, q.type,
+           q.correct_count, q.wrong_count,
+           q.subject_id, s.name as subject_name, q.grade_level,
+           (q.correct_count + q.wrong_count) as total_attempts
+    FROM questions q JOIN subjects s ON s.id = q.subject_id
+    WHERE ${where.join(' AND ')} ORDER BY q.subject_id, q.difficulty
+  `).all(...params);
+
+  // Fetch all relevant answer_details in one query for discrimination index
+  if (questions.length === 0) return res.json({ questions: [], summary: { total: 0, needs_review: 0, avg_pass_rate: 0, avg_discrimination: null } });
+  const qIds = questions.map(q => q.id);
+  const allAnswers = db.prepare(`
+    SELECT ad.question_id, ad.is_correct,
+           ROUND(s.score * 100.0 / NULLIF(s.total_score, 0), 2) as pct
+    FROM answer_details ad
+    JOIN submissions s ON s.id = ad.submission_id
+    WHERE ad.question_id IN (${qIds.map(() => '?').join(',')})
+    ORDER BY ad.question_id, pct
+  `).all(...qIds);
+
+  // Group answers by question_id
+  const answerMap = {};
+  allAnswers.forEach(a => {
+    if (!answerMap[a.question_id]) answerMap[a.question_id] = [];
+    answerMap[a.question_id].push(a);
+  });
+
+  const result = questions.map(q => {
+    const pass_rate = Math.round(q.correct_count * 100.0 / q.total_attempts * 10) / 10;
+    const pr = pass_rate / 100;
+    const empirical_difficulty = pr >= 0.8 ? 1 : pr >= 0.6 ? 2 : pr >= 0.4 ? 3 : pr >= 0.2 ? 4 : 5;
+
+    // Discrimination index: top 27% vs bottom 27% pass rate difference
+    let discrimination_index = null;
+    const answers = (answerMap[q.id] || []).sort((a, b) => a.pct - b.pct);
+    if (answers.length >= 6) {
+      const cutoff = Math.max(1, Math.floor(answers.length * 0.27));
+      const low = answers.slice(0, cutoff);
+      const high = answers.slice(-cutoff);
+      const lowPass = low.reduce((s, a) => s + a.is_correct, 0) / low.length;
+      const highPass = high.reduce((s, a) => s + a.is_correct, 0) / high.length;
+      discrimination_index = Math.round((highPass - lowPass) * 100) / 100;
+    }
+
+    const quality_flags = [];
+    if (pr > 0.95) quality_flags.push('太容易（通過率>95%）');
+    if (pr < 0.05) quality_flags.push('太困難（通過率<5%）');
+    if (discrimination_index !== null && discrimination_index < 0.2) quality_flags.push('鑑別度低（<0.2）');
+    if (discrimination_index !== null && discrimination_index < 0) quality_flags.push('負鑑別度');
+    if (Math.abs(empirical_difficulty - q.difficulty) >= 2) quality_flags.push(`難度標示異常（標示${q.difficulty}，實際${empirical_difficulty}）`);
+
+    let quality_score = 100 - quality_flags.length * 20;
+    if (discrimination_index !== null) quality_score = Math.min(quality_score, Math.round(Math.max(0, discrimination_index) * 100));
+
+    return { ...q, pass_rate, empirical_difficulty, discrimination_index, quality_flags, quality_score: Math.max(0, quality_score), needs_review: quality_flags.length > 0 };
+  });
+
+  const withDI = result.filter(q => q.discrimination_index !== null);
+  res.json({
+    questions: result,
+    summary: {
+      total: result.length,
+      needs_review: result.filter(q => q.needs_review).length,
+      avg_pass_rate: result.length ? Math.round(result.reduce((s, q) => s + q.pass_rate, 0) / result.length * 10) / 10 : 0,
+      avg_discrimination: withDI.length ? Math.round(withDI.reduce((s, q) => s + q.discrimination_index, 0) / withDI.length * 100) / 100 : null
+    }
+  });
+});
+
+// GET student ability profile using Rasch model (admin)
+app.get('/api/analytics/student-ability', requireAdmin, (req, res) => {
+  const { student_name, student_id } = req.query;
+  if (!student_name && !student_id) return res.status(400).json({ error: '請提供 student_name 或 student_id' });
+  const where = ['1=1'];
+  const params = [];
+  if (student_name) { where.push('student_name = ?'); params.push(student_name); }
+  if (student_id)   { where.push('student_id = ?');   params.push(student_id); }
+  const subs = db.prepare(`SELECT id FROM submissions WHERE ${where.join(' AND ')}`).all(...params);
+  if (!subs.length) return res.status(404).json({ error: '找不到此學生的作答紀錄' });
+  const ids = subs.map(s => s.id);
+  const details = db.prepare(`
+    SELECT ad.is_correct, q.difficulty, q.subject_id, s.name as subject_name
+    FROM answer_details ad
+    JOIN questions q ON q.id = ad.question_id
+    JOIN subjects s ON s.id = q.subject_id
+    WHERE ad.submission_id IN (${ids.map(() => '?').join(',')})
+  `).all(...ids);
+
+  const bySubject = {};
+  details.forEach(d => {
+    if (!bySubject[d.subject_id]) bySubject[d.subject_id] = { subject_name: d.subject_name, responses: [] };
+    bySubject[d.subject_id].responses.push({ difficulty: d.difficulty, is_correct: d.is_correct });
+  });
+  const ability_profile = Object.entries(bySubject).map(([sid, data]) => ({
+    subject_id: parseInt(sid),
+    subject_name: data.subject_name,
+    sample_size: data.responses.length,
+    ability: estimateAbilityRasch(data.responses),
+    correct_count: data.responses.filter(r => r.is_correct).length,
+    pass_rate: Math.round(data.responses.filter(r => r.is_correct).length / data.responses.length * 100)
+  })).sort((a, b) => a.subject_id - b.subject_id);
+
+  res.json({
+    student_name: student_name || '',
+    student_id: student_id || '',
+    total_responses: details.length,
+    exam_count: subs.length,
+    overall_ability: estimateAbilityRasch(details.map(d => ({ difficulty: d.difficulty, is_correct: d.is_correct }))),
+    ability_profile
+  });
+});
+
+// GET personalized recommendations
+app.get('/api/recommendations', (req, res) => {
+  const { student_name, student_id, subject_id, count = 10, grade_level } = req.query;
+  const n = Math.min(50, Math.max(1, parseInt(count) || 10));
+
+  if (!student_name && !student_id) {
+    // No student context — return random questions
+    const w = ['q.is_archived = 0']; const p = [];
+    if (grade_level) { w.push('q.grade_level = ?'); p.push(grade_level); }
+    if (subject_id)  { w.push('q.subject_id = ?');  p.push(subject_id); }
+    const qs = db.prepare(`SELECT q.*, s.name as subject_name FROM questions q JOIN subjects s ON s.id = q.subject_id WHERE ${w.join(' AND ')} ORDER BY RANDOM() LIMIT ?`).all(...p, n);
+    return res.json({ recommendations: qs, context: { reason: '無歷史資料，隨機推薦' } });
+  }
+
+  const swhere = ['1=1']; const sparams = [];
+  if (student_name) { swhere.push('student_name = ?'); sparams.push(student_name); }
+  if (student_id)   { swhere.push('student_id = ?');   sparams.push(student_id); }
+  const subs = db.prepare(`SELECT id FROM submissions WHERE ${swhere.join(' AND ')}`).all(...sparams);
+
+  if (!subs.length) {
+    const w = ['q.is_archived = 0']; const p = [];
+    if (grade_level) { w.push('q.grade_level = ?'); p.push(grade_level); }
+    const qs = db.prepare(`SELECT q.*, s.name as subject_name FROM questions q JOIN subjects s ON s.id = q.subject_id WHERE ${w.join(' AND ')} ORDER BY RANDOM() LIMIT ?`).all(...p, n);
+    return res.json({ recommendations: qs, context: { reason: '無歷史資料，隨機推薦' } });
+  }
+
+  const ids = subs.map(s => s.id);
+  const details = db.prepare(`
+    SELECT ad.is_correct, ad.question_id, q.difficulty, q.subject_id, q.grade_level, s.name as subject_name
+    FROM answer_details ad
+    JOIN questions q ON q.id = ad.question_id
+    JOIN subjects s ON s.id = q.subject_id
+    WHERE ad.submission_id IN (${ids.map(() => '?').join(',')})
+  `).all(...ids);
+
+  const answeredIds = [...new Set(details.map(d => d.question_id))];
+  const bySubject = {};
+  details.forEach(d => {
+    if (!bySubject[d.subject_id]) bySubject[d.subject_id] = { name: d.subject_name, grade_level: d.grade_level, responses: [], wrong: 0 };
+    bySubject[d.subject_id].responses.push({ difficulty: d.difficulty, is_correct: d.is_correct });
+    if (!d.is_correct) bySubject[d.subject_id].wrong++;
+  });
+
+  // Target: weakest subject or specified
+  let targetSubjectId = subject_id ? parseInt(subject_id) : null;
+  let targetAbility = 3;
+  if (!targetSubjectId) {
+    let maxWrong = -1;
+    for (const [sid, data] of Object.entries(bySubject)) {
+      if (data.wrong > maxWrong) { maxWrong = data.wrong; targetSubjectId = parseInt(sid); }
+    }
+  }
+  if (targetSubjectId && bySubject[targetSubjectId]) {
+    targetAbility = estimateAbilityRasch(bySubject[targetSubjectId].responses) || 3;
+  }
+
+  const targetDiff = Math.round(Math.min(5, Math.max(1, targetAbility + 0.5)));
+  const diffLow = Math.max(1, targetDiff - 1), diffHigh = Math.min(5, targetDiff + 1);
+  const excl = answeredIds.length > 0 ? `AND q.id NOT IN (${answeredIds.map(() => '?').join(',')})` : '';
+  const excludeParams = answeredIds.length > 0 ? answeredIds : [];
+
+  let sql = `SELECT q.*, s.name as subject_name FROM questions q JOIN subjects s ON s.id = q.subject_id WHERE q.is_archived = 0 AND q.difficulty BETWEEN ? AND ? ${excl}`;
+  let params = [diffLow, diffHigh, ...excludeParams];
+  if (targetSubjectId) { sql += ' AND q.subject_id = ?'; params.push(targetSubjectId); }
+  if (grade_level)     { sql += ' AND q.grade_level = ?'; params.push(grade_level); }
+  sql += ' ORDER BY RANDOM() LIMIT ?'; params.push(n);
+
+  let recs = db.prepare(sql).all(...params);
+
+  // Broaden if insufficient
+  if (recs.length < n) {
+    let sql2 = `SELECT q.*, s.name as subject_name FROM questions q JOIN subjects s ON s.id = q.subject_id WHERE q.is_archived = 0 ${excl}`;
+    const p2 = [...excludeParams];
+    if (targetSubjectId) { sql2 += ' AND q.subject_id = ?'; p2.push(targetSubjectId); }
+    if (grade_level)     { sql2 += ' AND q.grade_level = ?'; p2.push(grade_level); }
+    sql2 += ' ORDER BY RANDOM() LIMIT ?'; p2.push(n - recs.length);
+    const existing = new Set(recs.map(r => r.id));
+    recs = [...recs, ...db.prepare(sql2).all(...p2).filter(r => !existing.has(r.id))];
+  }
+
+  const tname = targetSubjectId && bySubject[targetSubjectId] ? bySubject[targetSubjectId].name : '全科目';
+  res.json({
+    recommendations: recs,
+    context: {
+      student_name: student_name || '',
+      target_subject: tname,
+      estimated_ability: Math.round(targetAbility * 10) / 10,
+      target_difficulty: targetDiff,
+      total_history: details.length,
+      reason: `依能力估算值 ${Math.round(targetAbility * 10) / 10}，推薦 ${tname} 難度 ${targetDiff} 附近的題目`
+    }
+  });
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
