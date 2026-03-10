@@ -300,6 +300,12 @@ const resultHtml = `<!DOCTYPE html>
 </main>
 <script>
 const id = new URLSearchParams(location.search).get('id');
+function getOptionLabel(q, letter) {
+  if (!letter) return '（未作答）';
+  const map = { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d };
+  const text = map[letter.toUpperCase()];
+  return text ? letter.toUpperCase() + '. ' + text : letter.toUpperCase();
+}
 async function loadResult() {
   const res = await fetch('/api/submissions/' + id);
   const data = await res.json();
@@ -322,8 +328,8 @@ async function loadResult() {
           </div>
           <p class="text-gray-800 mb-3">\${d.content}</p>
           <div class="text-sm space-y-1">
-            <p>你的答案：<span class="\${d.is_correct ? 'text-green-600' : 'text-red-600'} font-medium">\${d.given_answer || '（未作答）'}</span></p>
-            \${!d.is_correct ? \`<p>正確答案：<span class="text-green-600 font-medium">\${d.correct_answer}</span></p>\` : ''}
+            <p>你的答案：<span class="\${d.is_correct ? 'text-green-600' : 'text-red-600'} font-medium">\${d.type === 'choice' ? getOptionLabel(d, d.given_answer) : (d.given_answer || '（未作答）')}</span></p>
+            \${!d.is_correct ? \`<p>正確答案：<span class="text-green-600 font-medium">\${d.type === 'choice' ? getOptionLabel(d, d.correct_answer) : d.correct_answer}</span></p>\` : ''}
             \${d.explanation ? \`<p class="text-gray-500 mt-2 bg-gray-50 p-2 rounded">💡 \${d.explanation}</p>\` : ''}
           </div>
         </div>
@@ -1680,6 +1686,12 @@ const analysisHtml = `<!DOCTYPE html>
 </main>
 <script>
 const id = new URLSearchParams(location.search).get('id');
+function getOptionLabel(q, letter) {
+  if (!letter) return '（未作答）';
+  const map = { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d };
+  const text = map[letter.toUpperCase()];
+  return text ? letter.toUpperCase() + '. ' + text : letter.toUpperCase();
+}
 
 async function loadAnalysis() {
   const res = await fetch('/api/submissions/' + id + '/analysis');
@@ -1736,7 +1748,7 @@ async function loadAnalysis() {
       </div>
       <p class="text-gray-800 mb-2">\${q.content}</p>
       <div class="text-sm space-y-1">
-        \${q.type==='choice'?[\`<p>你的答案：<span class="text-red-500 font-medium">\${q.given_answer||'（未作答）'}</span></p>\`,\`<p>正確答案：<span class="text-green-600 font-medium">\${q.correct_answer}</span></p>\`].join(''):\`<p>你的答案：<span class="text-red-500 font-medium">\${q.given_answer||'（未作答）'}</span></p><p>正確答案：<span class="text-green-600 font-medium">\${q.correct_answer}</span></p>\`}
+        \${q.type==='choice'?[\`<p>你的答案：<span class="text-red-500 font-medium">\${getOptionLabel(q, q.given_answer)}</span></p>\`,\`<p>正確答案：<span class="text-green-600 font-medium">\${getOptionLabel(q, q.correct_answer)}</span></p>\`].join(''):\`<p>你的答案：<span class="text-red-500 font-medium">\${q.given_answer||'（未作答）'}</span></p><p>正確答案：<span class="text-green-600 font-medium">\${q.correct_answer}</span></p>\`}
         \${q.explanation ? \`<p class="text-gray-500 mt-2 bg-gray-50 p-2 rounded">💡 \${q.explanation}</p>\` : ''}
       </div>
     </div>
