@@ -78,17 +78,21 @@ function startExam() {
   startTimer();
 }
 
+const audioPlayCounts = {};
+const AUDIO_MAX_PLAYS = 3;
+
 function renderQuestions() {
   const container = document.getElementById('questions-container');
   const nav = document.getElementById('question-nav');
   container.innerHTML = examData.questions.map((q, i) => `
     <div id="q-${i}" class="bg-white rounded-xl shadow p-6 mb-4">
       <div class="flex justify-between items-start mb-3">
-        <span class="text-sm font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">第 ${i+1} 題 · ${q.subject_name} · ${q.score}分</span>
+        <span class="text-sm font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">第 ${i+1} 題 · ${q.subject_name} · ${q.score}分${q.type === 'listening' ? ' · 🎧 聽力' : ''}</span>
         <span class="text-xs text-gray-400">${'★'.repeat(q.difficulty || 1)}${'☆'.repeat(5-(q.difficulty||1))}</span>
       </div>
+      ${q.audio_url ? renderAudioPlayer(q, i) : ''}
       <p class="text-gray-800 mb-4 leading-relaxed">${q.content}</p>
-      ${q.type === 'choice' ? renderChoices(q, i) : renderFill(q, i)}
+      ${(q.type === 'choice' || q.type === 'listening') ? renderChoices(q, i) : renderFill(q, i)}
     </div>
   `).join('') + '<div class="h-24"></div>';
   if (window.MathJax) MathJax.typesetPromise([container]);
@@ -96,6 +100,48 @@ function renderQuestions() {
     <button id="nav-${i}" onclick="scrollToQ(${i})" class="w-8 h-8 rounded text-sm font-medium border-2 border-gray-300 text-gray-600 hover:border-indigo-400">${i+1}</button>
   `).join('');
   updateProgress();
+}
+
+function renderAudioPlayer(q, idx) {
+  return `
+    <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-blue-700 font-medium text-sm">🎧 請先聆聽音訊再作答</span>
+        <span id="play-count-${idx}" class="text-xs text-blue-500 ml-auto">已播放：0 / ${AUDIO_MAX_PLAYS} 次</span>
+      </div>
+      <audio id="audio-${idx}" src="${q.audio_url}" preload="none" controlsList="nodownload"
+        class="w-full h-10" onended="onAudioEnded(${idx})"></audio>
+      <button id="play-btn-${idx}" onclick="playAudio(${idx})"
+        class="mt-2 w-full py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-colors">
+        ▶ 播放音訊
+      </button>
+    </div>
+  `;
+}
+
+function playAudio(idx) {
+  const audio = document.getElementById(`audio-${idx}`);
+  const btn   = document.getElementById(`play-btn-${idx}`);
+  const count = audioPlayCounts[idx] || 0;
+  if (count >= AUDIO_MAX_PLAYS) {
+    alert(`已達播放上限（${AUDIO_MAX_PLAYS} 次），無法再播放`);
+    return;
+  }
+  audioPlayCounts[idx] = count + 1;
+  document.getElementById(`play-count-${idx}`).textContent = `已播放：${audioPlayCounts[idx]} / ${AUDIO_MAX_PLAYS} 次`;
+  if (audioPlayCounts[idx] >= AUDIO_MAX_PLAYS) {
+    btn.textContent = '已達播放上限';
+    btn.disabled = true;
+    btn.classList.replace('bg-blue-600','bg-gray-400');
+    btn.classList.replace('hover:bg-blue-700','hover:bg-gray-400');
+  }
+  audio.currentTime = 0;
+  audio.play();
+}
+
+function onAudioEnded(idx) {
+  const btn = document.getElementById(`play-btn-${idx}`);
+  if (btn && !btn.disabled) btn.textContent = '▶ 再聽一次';
 }
 
 function renderChoices(q, idx) {

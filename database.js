@@ -84,6 +84,17 @@ db.exec(`
   }
 }
 
+// Migration: add audio_url and audio_transcript columns to questions if not exists
+{
+  const audioCols = db.prepare("PRAGMA table_info(questions)").all().map(c => c.name);
+  if (!audioCols.includes('audio_url')) {
+    db.exec(`ALTER TABLE questions ADD COLUMN audio_url TEXT`);
+  }
+  if (!audioCols.includes('audio_transcript')) {
+    db.exec(`ALTER TABLE questions ADD COLUMN audio_transcript TEXT`);
+  }
+}
+
 // Migration: add grade_level column to questions if not exists
 const cols = db.prepare("PRAGMA table_info(questions)").all().map(c => c.name);
 if (!cols.includes('grade_level')) {

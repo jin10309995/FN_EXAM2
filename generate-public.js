@@ -186,17 +186,21 @@ function startExam() {
   startTimer();
 }
 
+const audioPlayCounts = {};
+const AUDIO_MAX_PLAYS = 3;
+
 function renderQuestions() {
   const container = document.getElementById('questions-container');
   const nav = document.getElementById('question-nav');
   container.innerHTML = examData.questions.map((q, i) => \`
     <div id="q-\${i}" class="bg-white rounded-xl shadow p-6 mb-4">
       <div class="flex justify-between items-start mb-3">
-        <span class="text-sm font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">第 \${i+1} 題 · \${q.subject_name} · \${q.score}分</span>
+        <span class="text-sm font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">第 \${i+1} 題 · \${q.subject_name} · \${q.score}分\${q.type === 'listening' ? ' · 🎧 聽力' : ''}</span>
         <span class="text-xs text-gray-400">\${'★'.repeat(q.difficulty || 1)}\${'☆'.repeat(5-(q.difficulty||1))}</span>
       </div>
+      \${q.audio_url ? renderAudioPlayer(q, i) : ''}
       <p class="text-gray-800 mb-4 leading-relaxed">\${q.content}</p>
-      \${q.type === 'choice' ? renderChoices(q, i) : renderFill(q, i)}
+      \${(q.type === 'choice' || q.type === 'listening') ? renderChoices(q, i) : renderFill(q, i)}
     </div>
   \`).join('') + '<div class="h-24"></div>';
   if (window.MathJax) MathJax.typesetPromise([container]);
@@ -204,6 +208,48 @@ function renderQuestions() {
     <button id="nav-\${i}" onclick="scrollToQ(\${i})" class="w-8 h-8 rounded text-sm font-medium border-2 border-gray-300 text-gray-600 hover:border-indigo-400">\${i+1}</button>
   \`).join('');
   updateProgress();
+}
+
+function renderAudioPlayer(q, idx) {
+  return \`
+    <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-blue-700 font-medium text-sm">🎧 請先聆聽音訊再作答</span>
+        <span id="play-count-\${idx}" class="text-xs text-blue-500 ml-auto">已播放：0 / \${AUDIO_MAX_PLAYS} 次</span>
+      </div>
+      <audio id="audio-\${idx}" src="\${q.audio_url}" preload="none" controlsList="nodownload"
+        class="w-full h-10" onended="onAudioEnded(\${idx})"></audio>
+      <button id="play-btn-\${idx}" onclick="playAudio(\${idx})"
+        class="mt-2 w-full py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-colors">
+        ▶ 播放音訊
+      </button>
+    </div>
+  \`;
+}
+
+function playAudio(idx) {
+  const audio = document.getElementById(\`audio-\${idx}\`);
+  const btn   = document.getElementById(\`play-btn-\${idx}\`);
+  const count = audioPlayCounts[idx] || 0;
+  if (count >= AUDIO_MAX_PLAYS) {
+    alert(\`已達播放上限（\${AUDIO_MAX_PLAYS} 次），無法再播放\`);
+    return;
+  }
+  audioPlayCounts[idx] = count + 1;
+  document.getElementById(\`play-count-\${idx}\`).textContent = \`已播放：\${audioPlayCounts[idx]} / \${AUDIO_MAX_PLAYS} 次\`;
+  if (audioPlayCounts[idx] >= AUDIO_MAX_PLAYS) {
+    btn.textContent = '已達播放上限';
+    btn.disabled = true;
+    btn.classList.replace('bg-blue-600','bg-gray-400');
+    btn.classList.replace('hover:bg-blue-700','hover:bg-gray-400');
+  }
+  audio.currentTime = 0;
+  audio.play();
+}
+
+function onAudioEnded(idx) {
+  const btn = document.getElementById(\`play-btn-\${idx}\`);
+  if (btn && !btn.disabled) btn.textContent = '▶ 再聽一次';
 }
 
 function renderChoices(q, idx) {
@@ -553,6 +599,7 @@ body{font-family:'Noto Sans TC',sans-serif;}
               <option value="choice">選擇題</option>
               <option value="fill">填充題</option>
               <option value="calculation">計算題</option>
+              <option value="listening">🎧 聽力題</option>
             </select>
           </div>
           <div>
@@ -571,12 +618,36 @@ body{font-family:'Noto Sans TC',sans-serif;}
           <textarea id="q-content" rows="3" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none" placeholder="支援 LaTeX 數學式，如：\$x^2 + y^2 = z^2\$" required></textarea>
         </div>
         <div id="choice-options">
-          <label class="block text-sm font-medium text-gray-700 mb-2">選項（選擇題）</label>
+          <label class="block text-sm font-medium text-gray-700 mb-2">選項（選擇題／聽力題）</label>
           <div class="space-y-2">
             <div class="flex gap-2 items-center"><span class="w-6 text-sm font-medium text-indigo-600">A.</span><input id="q-opt-a" type="text" class="flex-1 border border-gray-300 rounded px-3 py-1.5 text-sm" placeholder="選項 A"></div>
             <div class="flex gap-2 items-center"><span class="w-6 text-sm font-medium text-indigo-600">B.</span><input id="q-opt-b" type="text" class="flex-1 border border-gray-300 rounded px-3 py-1.5 text-sm" placeholder="選項 B"></div>
             <div class="flex gap-2 items-center"><span class="w-6 text-sm font-medium text-indigo-600">C.</span><input id="q-opt-c" type="text" class="flex-1 border border-gray-300 rounded px-3 py-1.5 text-sm" placeholder="選項 C"></div>
             <div class="flex gap-2 items-center"><span class="w-6 text-sm font-medium text-indigo-600">D.</span><input id="q-opt-d" type="text" class="flex-1 border border-gray-300 rounded px-3 py-1.5 text-sm" placeholder="選項 D"></div>
+          </div>
+        </div>
+        <!-- 聽力題音訊區塊 -->
+        <div id="audio-section" class="hidden bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3">
+          <p class="text-sm font-medium text-blue-800">🎧 聽力音訊設定</p>
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">上傳音訊檔案（mp3/wav/ogg/m4a，最大 50MB）</label>
+            <div class="flex gap-2 items-center">
+              <input id="q-audio-file" type="file" accept="audio/*" onchange="previewAudio()" class="flex-1 text-sm border border-gray-300 rounded px-2 py-1">
+              <button type="button" onclick="uploadAudio()" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors whitespace-nowrap">上傳</button>
+            </div>
+            <p id="audio-upload-status" class="text-xs text-gray-500 mt-1"></p>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">或直接輸入音訊 URL</label>
+            <input id="q-audio-url" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm" placeholder="https://example.com/audio.mp3 或 /audio/filename.mp3">
+          </div>
+          <div id="audio-preview-wrap" class="hidden">
+            <label class="block text-xs text-gray-600 mb-1">預覽</label>
+            <audio id="q-audio-preview" controls class="w-full h-8"></audio>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">逐字稿（選填，僅管理員可見）</label>
+            <textarea id="q-audio-transcript" rows="2" class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm resize-none" placeholder="音訊內容文字稿，幫助核稿與備份..."></textarea>
           </div>
         </div>
         <div class="grid grid-cols-2 gap-3">
@@ -989,7 +1060,7 @@ async function loadQuestions(page = 1) {
 
   const res = await fetch('/api/questions?' + params);
   const data = await res.json();
-  const typeLabel = {choice:'選擇題',fill:'填充題',calculation:'計算題'};
+  const typeLabel = {choice:'選擇題',fill:'填充題',calculation:'計算題',listening:'🎧 聽力題'};
   const gradeLabel = {junior_high:'升國中',elementary_6:'國小六年級',grade_7:'國一',grade_8:'國二',grade_9:'國三',bctest:'會考'};
   const gradeCls = {elementary_6:'bg-green-50 text-green-700',junior_high:'bg-blue-50 text-blue-700',grade_7:'bg-purple-50 text-purple-700',grade_8:'bg-orange-50 text-orange-700',grade_9:'bg-red-50 text-red-700',bctest:'bg-yellow-50 text-yellow-700'};
   const tbody = data.data.map(q => \`
@@ -1045,13 +1116,63 @@ function openQuestionModal(data = null) {
   document.getElementById('q-explanation').value  = data?.explanation || '';
   document.getElementById('q-source').value       = data?.source || '';
   document.getElementById('q-tags').value         = data?.tags || '';
+  document.getElementById('q-audio-url').value    = data?.audio_url || '';
+  document.getElementById('q-audio-transcript').value = data?.audio_transcript || '';
+  document.getElementById('audio-upload-status').textContent = '';
+  // 若有音訊 URL 則顯示預覽
+  const previewWrap = document.getElementById('audio-preview-wrap');
+  const audioPreview = document.getElementById('q-audio-preview');
+  if (data?.audio_url) {
+    audioPreview.src = data.audio_url;
+    previewWrap.classList.remove('hidden');
+  } else {
+    audioPreview.src = '';
+    previewWrap.classList.add('hidden');
+  }
   toggleOptions();
   document.getElementById('question-modal').classList.remove('hidden');
 }
 
 function toggleOptions() {
-  const isChoice = document.getElementById('q-type').value === 'choice';
-  document.getElementById('choice-options').classList.toggle('hidden', !isChoice);
+  const type = document.getElementById('q-type').value;
+  const isChoiceOrListening = type === 'choice' || type === 'listening';
+  const isListening = type === 'listening';
+  document.getElementById('choice-options').classList.toggle('hidden', !isChoiceOrListening);
+  document.getElementById('audio-section').classList.toggle('hidden', !isListening);
+}
+
+async function uploadAudio() {
+  const fileInput = document.getElementById('q-audio-file');
+  const statusEl  = document.getElementById('audio-upload-status');
+  if (!fileInput.files.length) { alert('請先選擇音訊檔案'); return; }
+  const formData = new FormData();
+  formData.append('audio', fileInput.files[0]);
+  statusEl.textContent = '上傳中...';
+  try {
+    const res = await fetch('/api/audio/upload', {
+      method: 'POST',
+      headers: adminKey ? { 'x-api-key': adminKey } : {},
+      body: formData
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '上傳失敗');
+    document.getElementById('q-audio-url').value = data.audio_url;
+    const audioPreview = document.getElementById('q-audio-preview');
+    audioPreview.src = data.audio_url;
+    document.getElementById('audio-preview-wrap').classList.remove('hidden');
+    statusEl.textContent = '✅ 上傳成功：' + data.filename;
+  } catch (err) {
+    statusEl.textContent = '❌ ' + err.message;
+  }
+}
+
+function previewAudio() {
+  const fileInput = document.getElementById('q-audio-file');
+  if (!fileInput.files.length) return;
+  const url = URL.createObjectURL(fileInput.files[0]);
+  const audioPreview = document.getElementById('q-audio-preview');
+  audioPreview.src = url;
+  document.getElementById('audio-preview-wrap').classList.remove('hidden');
 }
 
 async function editQuestion(id) {
@@ -1067,21 +1188,24 @@ async function deleteQuestion(id) {
 
 async function saveQuestion() {
   const body = {
-    subject_id:  document.getElementById('q-subject').value,
-    type:        document.getElementById('q-type').value,
-    difficulty:  document.getElementById('q-difficulty').value,
-    grade_level: document.getElementById('q-grade-level').value,
-    content:     document.getElementById('q-content').value.trim(),
-    option_a:    document.getElementById('q-opt-a').value.trim(),
-    option_b:    document.getElementById('q-opt-b').value.trim(),
-    option_c:    document.getElementById('q-opt-c').value.trim(),
-    option_d:    document.getElementById('q-opt-d').value.trim(),
-    answer:      document.getElementById('q-answer').value.trim(),
-    explanation: document.getElementById('q-explanation').value.trim(),
-    source:      document.getElementById('q-source').value.trim(),
-    tags:        document.getElementById('q-tags').value.trim(),
+    subject_id:       document.getElementById('q-subject').value,
+    type:             document.getElementById('q-type').value,
+    difficulty:       document.getElementById('q-difficulty').value,
+    grade_level:      document.getElementById('q-grade-level').value,
+    content:          document.getElementById('q-content').value.trim(),
+    option_a:         document.getElementById('q-opt-a').value.trim(),
+    option_b:         document.getElementById('q-opt-b').value.trim(),
+    option_c:         document.getElementById('q-opt-c').value.trim(),
+    option_d:         document.getElementById('q-opt-d').value.trim(),
+    answer:           document.getElementById('q-answer').value.trim(),
+    explanation:      document.getElementById('q-explanation').value.trim(),
+    source:           document.getElementById('q-source').value.trim(),
+    tags:             document.getElementById('q-tags').value.trim(),
+    audio_url:        document.getElementById('q-audio-url').value.trim() || null,
+    audio_transcript: document.getElementById('q-audio-transcript').value.trim() || null,
   };
   if (!body.content || !body.answer) { alert('請填寫題目內容與正確答案'); return; }
+  if (body.type === 'listening' && !body.audio_url) { alert('聽力題必須填寫音訊 URL 或先上傳音訊檔案'); return; }
   const url    = editingQuestionId ? '/api/questions/' + editingQuestionId : '/api/questions';
   const method = editingQuestionId ? 'PUT' : 'POST';
   await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });

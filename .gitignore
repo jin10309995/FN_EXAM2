@@ -1,0 +1,5 @@
+node_modules/
+.env
+uploads/audio/
+exam.db-shm
+exam.db-wal

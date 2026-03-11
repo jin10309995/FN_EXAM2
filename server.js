@@ -1,13 +1,39 @@
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
+const fs = require('fs');
 const helmet = require('helmet');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
+const multer = require('multer');
 const db = require('./database');
 const { generateQuestions } = require('./llm');
 
 const app = express();
+
+// ─── 音訊上傳目錄 ────────────────────────────────────────────────────────────
+const AUDIO_DIR = path.join(__dirname, 'uploads', 'audio');
+if (!fs.existsSync(AUDIO_DIR)) fs.mkdirSync(AUDIO_DIR, { recursive: true });
+
+const audioStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, AUDIO_DIR),
+  filename:    (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase() || '.mp3';
+    cb(null, `audio_${Date.now()}${ext}`);
+  }
+});
+const upload = multer({
+  storage: audioStorage,
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB
+  fileFilter: (req, file, cb) => {
+    if (/^audio\/(mpeg|wav|ogg|mp4|x-m4a|aac|webm)$/.test(file.mimetype) ||
+        /\.(mp3|wav|ogg|m4a|aac|webm)$/i.test(file.originalname)) {
+      cb(null, true);
+    } else {
+      cb(new Error('只接受音訊檔案（mp3, wav, ogg, m4a, aac, webm）'));
+    }
+  }
+});
 
 // ─── Security Middleware ──────────────────────────────────────────────────────
 app.use(helmet({ contentSecurityPolicy: false })); // 安全 HTTP Headers
@@ -32,6 +58,19 @@ const apiLimiter = rateLimit({
   message: { error: '請求過於頻繁，請稍後再試' }
 });
 app.use('/api/', apiLimiter);
+
+// ─── 音訊靜態服務 ──────────────────────────────────────────────────────────────
+app.use('/audio', express.static(AUDIO_DIR));
+
+// ─── 音訊上傳（管理員） ────────────────────────────────────────────────────────
+app.post('/api/audio/upload', requireAdmin, (req, res, next) => {
+  upload.single('audio')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    if (!req.file) return res.status(400).json({ error: '未收到音訊檔案' });
+    const audioUrl = `/audio/${req.file.filename}`;
+    res.json({ audio_url: audioUrl, filename: req.file.filename });
+  });
+});
 
 // ─── Subjects ────────────────────────────────────────────────────────────────
 app.get('/api/subjects', (req, res) => {
@@ -111,20 +150,24 @@ app.get('/api/questions/:id', (req, res) => {
 });
 
 app.post('/api/questions', requireAdmin, (req, res) => {
-  const { subject_id, type, difficulty, content, option_a, option_b, option_c, option_d, answer, explanation, source, tags, grade_level = 'junior_high' } = req.body;
+  const { subject_id, type, difficulty, content, option_a, option_b, option_c, option_d, answer, explanation, source, tags, grade_level = 'junior_high', audio_url, audio_transcript } = req.body;
   if (!subject_id || !type || !difficulty || !content || !answer)
     return res.status(400).json({ error: '必填欄位不完整' });
+  if (!['choice', 'fill', 'calculation', 'listening'].includes(type))
+    return res.status(400).json({ error: '題型值無效' });
   if (!['elementary_6', 'junior_high', 'grade_7', 'grade_8', 'grade_9', 'bctest'].includes(grade_level))
     return res.status(400).json({ error: '學段值無效' });
   const r = db.prepare(`
-    INSERT INTO questions (subject_id,type,difficulty,content,option_a,option_b,option_c,option_d,answer,explanation,source,tags,grade_level)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-  `).run(subject_id, type, difficulty, content, option_a||null, option_b||null, option_c||null, option_d||null, answer, explanation||null, source||null, tags||null, grade_level);
+    INSERT INTO questions (subject_id,type,difficulty,content,option_a,option_b,option_c,option_d,answer,explanation,source,tags,grade_level,audio_url,audio_transcript)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `).run(subject_id, type, difficulty, content, option_a||null, option_b||null, option_c||null, option_d||null, answer, explanation||null, source||null, tags||null, grade_level, audio_url||null, audio_transcript||null);
   res.json({ id: r.lastInsertRowid, message: '題目新增成功' });
 });
 
 app.put('/api/questions/:id', requireAdmin, (req, res) => {
-  const { subject_id, type, difficulty, content, option_a, option_b, option_c, option_d, answer, explanation, source, tags, grade_level } = req.body;
+  const { subject_id, type, difficulty, content, option_a, option_b, option_c, option_d, answer, explanation, source, tags, grade_level, audio_url, audio_transcript } = req.body;
+  if (type && !['choice', 'fill', 'calculation', 'listening'].includes(type))
+    return res.status(400).json({ error: '題型值無效' });
   if (grade_level && !['elementary_6', 'junior_high', 'grade_7', 'grade_8', 'grade_9', 'bctest'].includes(grade_level))
     return res.status(400).json({ error: '學段值無效' });
   // 使用 COALESCE 支援部分欄位更新，未傳入的欄位保留原值
@@ -137,13 +180,14 @@ app.put('/api/questions/:id', requireAdmin, (req, res) => {
       answer=COALESCE(?,answer), explanation=COALESCE(?,explanation),
       source=COALESCE(?,source), tags=COALESCE(?,tags),
       grade_level=COALESCE(?,grade_level),
+      audio_url=COALESCE(?,audio_url), audio_transcript=COALESCE(?,audio_transcript),
       updated_at=datetime('now','localtime')
     WHERE id=?
   `).run(
     subject_id||null, type||null, difficulty||null, content||null,
     option_a||null, option_b||null, option_c||null, option_d||null,
     answer||null, explanation||null, source||null, tags||null,
-    grade_level||null, req.params.id
+    grade_level||null, audio_url||null, audio_transcript||null, req.params.id
   );
   if (r.changes === 0) return res.status(404).json({ error: '找不到題目' });
   res.json({ message: '題目更新成功' });
@@ -186,7 +230,8 @@ app.get('/api/exams/:id/take', (req, res) => {
   if (!exam) return res.status(404).json({ error: '試卷不存在或尚未開放' });
   const questions = db.prepare(`
     SELECT eq.sort_order, eq.score, q.id, q.type, q.content, q.subject_id,
-           q.option_a, q.option_b, q.option_c, q.option_d, s.name as subject_name
+           q.option_a, q.option_b, q.option_c, q.option_d, q.difficulty,
+           q.audio_url, s.name as subject_name
     FROM exam_questions eq
     JOIN questions q ON q.id = eq.question_id
     JOIN subjects s ON s.id = q.subject_id
@@ -263,7 +308,7 @@ app.post('/api/generate/questions', requireAdmin, async (req, res) => {
     const subject = db.prepare('SELECT * FROM subjects WHERE id = ?').get(subject_id);
     if (!subject) return res.status(404).json({ error: '找不到指定科目' });
 
-    const typeLabel = { choice: '單選題（A/B/C/D）', fill: '填空題', calculation: '計算題' }[type] || type;
+    const typeLabel = { choice: '單選題（A/B/C/D）', fill: '填空題', calculation: '計算題', listening: '英語聽力選擇題' }[type] || type;
     const gradeLabelMap = {elementary_6:'國小六年級',junior_high:'升國中（資優班）',grade_7:'國一（七年級）',grade_8:'國二（八年級）',grade_9:'國三（九年級）',bctest:'國中教育會考'};
     const gradeLabel = gradeLabelMap[grade_level] || '升國中（資優班）';
     const userPrompt = `請出 ${count} 題「${subject.name}」${gradeLabel}的${typeLabel}，難度 ${difficulty}/5（1 最易，5 最難）。${hint ? `\n補充要求：${hint}` : ''}`;
@@ -302,8 +347,8 @@ app.post('/api/questions/batch', requireAdmin, (req, res) => {
 
   const ins = db.prepare(`
     INSERT INTO questions
-      (subject_id,type,difficulty,content,option_a,option_b,option_c,option_d,answer,explanation,source,tags,grade_level)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+      (subject_id,type,difficulty,content,option_a,option_b,option_c,option_d,answer,explanation,source,tags,grade_level,audio_url,audio_transcript)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `);
   const insertAll = db.transaction((items) => {
     const ids = [];
@@ -316,7 +361,7 @@ app.post('/api/questions/batch', requireAdmin, (req, res) => {
         q.subject_id, q.type, q.difficulty, q.content,
         q.option_a||null, q.option_b||null, q.option_c||null, q.option_d||null,
         q.answer, q.explanation||null, q.source||null, q.tags||null,
-        q.grade_level||'junior_high'
+        q.grade_level||'junior_high', q.audio_url||null, q.audio_transcript||null
       );
       ids.push(r.lastInsertRowid);
     }
@@ -400,7 +445,7 @@ async function archiveAndReplace() {
 
     // 嘗試 LLM 自動生成替換題
     const newDiff = Math.min(q.difficulty + 1, 5);
-    const typeLabel = { choice: '單選題（A/B/C/D）', fill: '填空題', calculation: '計算題' }[q.type] || q.type;
+    const typeLabel = { choice: '單選題（A/B/C/D）', fill: '填空題', calculation: '計算題', listening: '英語聽力選擇題' }[q.type] || q.type;
     const gradeLabelMap2 = {elementary_6:'國小六年級',junior_high:'升國中（資優班）',grade_7:'國一（七年級）',grade_8:'國二（八年級）',grade_9:'國三（九年級）',bctest:'國中教育會考'};
     const gradeLabel = gradeLabelMap2[q.grade_level] || '升國中（資優班）';
     const prompt = `請出 1 題「${q.subject_name}」${gradeLabel}的${typeLabel}，難度 ${newDiff}/5（1 最易，5 最難）。請勿與以下題目重複：${q.content}`;
