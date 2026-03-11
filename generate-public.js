@@ -88,8 +88,8 @@ async function loadExams() {
   container.innerHTML = active.map(e => \`
     <div class="bg-white rounded-xl shadow p-6 flex justify-between items-center">
       <div>
-        <h3 class="text-lg font-bold text-gray-800">\${e.title}</h3>
-        <p class="text-sm text-gray-500 mt-1">\${e.description || ''}</p>
+        <h3 class="text-lg font-bold text-gray-800">\${escHtml(e.title)}</h3>
+        <p class="text-sm text-gray-500 mt-1">\${escHtml(e.description || '')}</p>
         <div class="flex gap-4 mt-2 text-sm text-gray-600">
           <span>📋 \${e.question_count} 題</span>
           <span>⏱ \${e.duration_min} 分鐘</span>
@@ -100,6 +100,7 @@ async function loadExams() {
     </div>
   \`).join('');
 }
+function escHtml(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 loadExams();
 </script>
 </body>
@@ -198,8 +199,8 @@ function renderQuestions() {
         <span class="text-sm font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">第 \${i+1} 題 · \${q.subject_name} · \${q.score}分\${q.type === 'listening' ? ' · 🎧 聽力' : ''}</span>
         <span class="text-xs text-gray-400">\${'★'.repeat(q.difficulty || 1)}\${'☆'.repeat(5-(q.difficulty||1))}</span>
       </div>
-      \${q.audio_url ? renderAudioPlayer(q, i) : ''}
-      <p class="text-gray-800 mb-4 leading-relaxed">\${q.content}</p>
+      \${q.type === 'listening' ? renderTTSPlayer(q, i) : ''}
+      <p class="text-gray-800 mb-4 leading-relaxed">\${escHtml(q.content)}</p>
       \${(q.type === 'choice' || q.type === 'listening') ? renderChoices(q, i) : renderFill(q, i)}
     </div>
   \`).join('') + '<div class="h-24"></div>';
@@ -210,46 +211,50 @@ function renderQuestions() {
   updateProgress();
 }
 
-function renderAudioPlayer(q, idx) {
+function renderTTSPlayer(q, idx) {
   return \`
-    <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+    <div class="bg-green-50 border border-green-200 rounded-lg p-3 mb-4">
       <div class="flex items-center gap-2 mb-2">
-        <span class="text-blue-700 font-medium text-sm">🎧 請先聆聽音訊再作答</span>
-        <span id="play-count-\${idx}" class="text-xs text-blue-500 ml-auto">已播放：0 / \${AUDIO_MAX_PLAYS} 次</span>
+        <span class="text-green-700 font-medium text-sm">🔊 請先聆聽題目再作答</span>
+        <span id="play-count-\${idx}" class="text-xs text-green-500 ml-auto">已播放：0 / \${AUDIO_MAX_PLAYS} 次</span>
       </div>
-      <audio id="audio-\${idx}" src="\${q.audio_url}" preload="none" controlsList="nodownload"
-        class="w-full h-10" onended="onAudioEnded(\${idx})"></audio>
-      <button id="play-btn-\${idx}" onclick="playAudio(\${idx})"
-        class="mt-2 w-full py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-colors">
-        ▶ 播放音訊
+      <button id="play-btn-\${idx}" onclick="speakTTS(\${idx})"
+        class="w-full py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium transition-colors">
+        🔊 朗讀題目
       </button>
     </div>
   \`;
 }
 
-function playAudio(idx) {
-  const audio = document.getElementById(\`audio-\${idx}\`);
+function speakTTS(idx) {
   const btn   = document.getElementById(\`play-btn-\${idx}\`);
   const count = audioPlayCounts[idx] || 0;
   if (count >= AUDIO_MAX_PLAYS) {
     alert(\`已達播放上限（\${AUDIO_MAX_PLAYS} 次），無法再播放\`);
     return;
   }
+  if (!window.speechSynthesis) {
+    alert('您的瀏覽器不支援語音朗讀功能，請改用 Chrome 或 Edge 瀏覽器');
+    return;
+  }
+  const q    = examData.questions[idx];
+  const text = q.audio_transcript || q.content;
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = 'en-US';
+  utter.rate = 0.85;
   audioPlayCounts[idx] = count + 1;
   document.getElementById(\`play-count-\${idx}\`).textContent = \`已播放：\${audioPlayCounts[idx]} / \${AUDIO_MAX_PLAYS} 次\`;
   if (audioPlayCounts[idx] >= AUDIO_MAX_PLAYS) {
     btn.textContent = '已達播放上限';
     btn.disabled = true;
-    btn.classList.replace('bg-blue-600','bg-gray-400');
-    btn.classList.replace('hover:bg-blue-700','hover:bg-gray-400');
+    btn.classList.replace('bg-green-600', 'bg-gray-400');
+    btn.classList.replace('hover:bg-green-700', 'hover:bg-gray-400');
+  } else {
+    btn.textContent = '播放中...';
+    utter.onend = () => { if (btn && !btn.disabled) btn.textContent = '🔊 再聽一次'; };
   }
-  audio.currentTime = 0;
-  audio.play();
-}
-
-function onAudioEnded(idx) {
-  const btn = document.getElementById(\`play-btn-\${idx}\`);
-  if (btn && !btn.disabled) btn.textContent = '▶ 再聽一次';
+  window.speechSynthesis.speak(utter);
 }
 
 function renderChoices(q, idx) {
@@ -317,6 +322,7 @@ async function submitAnswers() {
   }
 }
 
+function escHtml(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 loadExam();
 </script>
 </body>
@@ -350,8 +356,9 @@ function getOptionLabel(q, letter) {
   if (!letter) return '（未作答）';
   const map = { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d };
   const text = map[letter.toUpperCase()];
-  return text ? letter.toUpperCase() + '. ' + text : letter.toUpperCase();
+  return text ? letter.toUpperCase() + '. ' + escHtml(text) : letter.toUpperCase();
 }
+function escHtml(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 async function loadResult() {
   const res = await fetch('/api/submissions/' + id);
   const data = await res.json();
@@ -359,7 +366,7 @@ async function loadResult() {
   const color = pct >= 80 ? 'text-green-600' : pct >= 60 ? 'text-yellow-600' : 'text-red-600';
   document.getElementById('result-container').innerHTML = \`
     <div class="bg-white rounded-2xl shadow-lg p-8 mb-6 text-center">
-      <h2 class="text-2xl font-bold text-gray-800 mb-2">\${data.student_name} 的成績</h2>
+      <h2 class="text-2xl font-bold text-gray-800 mb-2">\${escHtml(data.student_name)} 的成績</h2>
       <div class="text-7xl font-bold \${color} my-6">\${pct}%</div>
       <p class="text-gray-500">\${data.score} / \${data.total_score} 分 &nbsp;·&nbsp; 作答時間: \${data.submitted_at}</p>
     </div>
@@ -372,11 +379,11 @@ async function loadResult() {
               \${d.is_correct ? '✓ 答對 +'+d.score_earned+'分' : '✗ 答錯'}
             </span>
           </div>
-          <p class="text-gray-800 mb-3">\${d.content}</p>
+          <p class="text-gray-800 mb-3">\${escHtml(d.content)}</p>
           <div class="text-sm space-y-1">
-            <p>你的答案：<span class="\${d.is_correct ? 'text-green-600' : 'text-red-600'} font-medium">\${d.type === 'choice' ? getOptionLabel(d, d.given_answer) : (d.given_answer || '（未作答）')}</span></p>
-            \${!d.is_correct ? \`<p>正確答案：<span class="text-green-600 font-medium">\${d.type === 'choice' ? getOptionLabel(d, d.correct_answer) : d.correct_answer}</span></p>\` : ''}
-            \${d.explanation ? \`<p class="text-gray-500 mt-2 bg-gray-50 p-2 rounded">💡 \${d.explanation}</p>\` : ''}
+            <p>你的答案：<span class="\${d.is_correct ? 'text-green-600' : 'text-red-600'} font-medium">\${d.type === 'choice' ? getOptionLabel(d, d.given_answer) : (escHtml(d.given_answer) || '（未作答）')}</span></p>
+            \${!d.is_correct ? \`<p>正確答案：<span class="text-green-600 font-medium">\${d.type === 'choice' ? getOptionLabel(d, d.correct_answer) : escHtml(d.correct_answer)}</span></p>\` : ''}
+            \${d.explanation ? \`<p class="text-gray-500 mt-2 bg-gray-50 p-2 rounded">💡 \${escHtml(d.explanation)}</p>\` : ''}
           </div>
         </div>
       \`).join('')}
@@ -626,28 +633,13 @@ body{font-family:'Noto Sans TC',sans-serif;}
             <div class="flex gap-2 items-center"><span class="w-6 text-sm font-medium text-indigo-600">D.</span><input id="q-opt-d" type="text" class="flex-1 border border-gray-300 rounded px-3 py-1.5 text-sm" placeholder="選項 D"></div>
           </div>
         </div>
-        <!-- 聽力題音訊區塊 -->
-        <div id="audio-section" class="hidden bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3">
-          <p class="text-sm font-medium text-blue-800">🎧 聽力音訊設定</p>
+        <!-- 聽力題 TTS 區塊 -->
+        <div id="audio-section" class="hidden bg-green-50 border border-green-200 rounded-lg p-4 space-y-3">
+          <p class="text-sm font-medium text-green-800">🔊 聽力題 TTS 設定</p>
           <div>
-            <label class="block text-xs text-gray-600 mb-1">上傳音訊檔案（mp3/wav/ogg/m4a，最大 50MB）</label>
-            <div class="flex gap-2 items-center">
-              <input id="q-audio-file" type="file" accept="audio/*" onchange="previewAudio()" class="flex-1 text-sm border border-gray-300 rounded px-2 py-1">
-              <button type="button" onclick="uploadAudio()" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors whitespace-nowrap">上傳</button>
-            </div>
-            <p id="audio-upload-status" class="text-xs text-gray-500 mt-1"></p>
-          </div>
-          <div>
-            <label class="block text-xs text-gray-600 mb-1">或直接輸入音訊 URL</label>
-            <input id="q-audio-url" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm" placeholder="https://example.com/audio.mp3 或 /audio/filename.mp3">
-          </div>
-          <div id="audio-preview-wrap" class="hidden">
-            <label class="block text-xs text-gray-600 mb-1">預覽</label>
-            <audio id="q-audio-preview" controls class="w-full h-8"></audio>
-          </div>
-          <div>
-            <label class="block text-xs text-gray-600 mb-1">逐字稿（選填，僅管理員可見）</label>
-            <textarea id="q-audio-transcript" rows="2" class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm resize-none" placeholder="音訊內容文字稿，幫助核稿與備份..."></textarea>
+            <label class="block text-xs text-gray-600 mb-1">TTS 朗讀文字（學生作答時將由瀏覽器朗讀此內容）</label>
+            <textarea id="q-audio-transcript" rows="2" class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm resize-none" placeholder="例如：What color is the sky? / The dog is running fast."></textarea>
+            <button type="button" onclick="previewTTS()" class="mt-1.5 px-3 py-1 bg-green-600 hover:bg-green-700 text-white text-xs rounded transition-colors">🔊 預覽 TTS 朗讀</button>
           </div>
         </div>
         <div class="grid grid-cols-2 gap-3">
@@ -893,7 +885,7 @@ async function loadQualityReport() {
   if (grade) params.set('grade_level', grade);
   const r = await fetch('/api/analytics/question-quality?' + params, { headers: { 'x-api-key': document.getElementById('api_key')?.value || '' } });
   const data = await r.json();
-  if (!r.ok) { document.getElementById('ml-quality-table').innerHTML = \`<div class="text-center py-8 text-red-500">\${data.error}</div>\`; return; }
+  if (!r.ok) { document.getElementById('ml-quality-table').innerHTML = \`<div class="text-center py-8 text-red-500">\${escHtml(data.error)}</div>\`; return; }
 
   document.getElementById('ml-quality-summary').innerHTML = [
     mlStat('分析題數', data.summary.total),
@@ -948,7 +940,7 @@ async function loadCalibration() {
   if (grade) params.set('grade_level', grade);
   const r = await fetch('/api/analytics/difficulty-calibration?' + params, { headers: { 'x-api-key': document.getElementById('api_key')?.value || '' } });
   const data = await r.json();
-  if (!r.ok) { document.getElementById('cal-table').innerHTML = \`<div class="text-center py-8 text-red-500">\${data.error}</div>\`; return; }
+  if (!r.ok) { document.getElementById('cal-table').innerHTML = \`<div class="text-center py-8 text-red-500">\${escHtml(data.error)}</div>\`; return; }
 
   document.getElementById('cal-summary').innerHTML = [
     mlStat('總題數', data.summary.total),
@@ -983,7 +975,7 @@ async function loadCalibration() {
             <td class="px-3 py-2 text-center">\${q.pass_rate !== null ? q.pass_rate + '%' : '—'}</td>
             <td class="px-3 py-2 text-center">\${q.total_attempts}</td>
             <td class="px-3 py-2 text-center font-bold \${q.deviation===null?'text-gray-400':q.is_anomalous?'text-red-500':Math.abs(q.deviation)>=1?'text-yellow-600':'text-gray-600'}">\${q.deviation !== null ? (q.deviation > 0 ? '+' : '') + q.deviation : '—'}</td>
-            <td class="px-3 py-2 text-xs text-gray-600 max-w-xs truncate">\${q.content}</td>
+            <td class="px-3 py-2 text-xs text-gray-600 max-w-xs truncate">\${escHtml(q.content)}</td>
           </tr>
         \`).join('')}
       </tbody>
@@ -1002,7 +994,7 @@ async function loadStudentAbility() {
   const r = await fetch('/api/analytics/student-ability?' + params, { headers: { 'x-api-key': document.getElementById('api_key')?.value || '' } });
   const data = await r.json();
   const el = document.getElementById('ability-result');
-  if (!r.ok) { el.innerHTML = \`<div class="bg-red-50 border border-red-200 rounded-xl p-4 text-red-600">\${data.error}</div>\`; return; }
+  if (!r.ok) { el.innerHTML = \`<div class="bg-red-50 border border-red-200 rounded-xl p-4 text-red-600">\${escHtml(data.error)}</div>\`; return; }
   const abilityColor = a => a >= 4 ? 'text-green-600' : a >= 2.5 ? 'text-yellow-600' : 'text-red-500';
   const abilityBar = a => {
     if (a === null) return '<div class="text-gray-400 text-xs">資料不足</div>';
@@ -1070,7 +1062,7 @@ async function loadQuestions(page = 1) {
       <td class="px-4 py-3 text-sm">\${typeLabel[q.type]||q.type}</td>
       <td class="px-4 py-3 text-sm">\${'★'.repeat(q.difficulty)}</td>
       <td class="px-4 py-3 text-sm"><span class="\${gradeCls[q.grade_level]||'bg-gray-50 text-gray-700'} text-xs px-2 py-0.5 rounded">\${gradeLabel[q.grade_level]||q.grade_level}</span></td>
-      <td class="px-4 py-3 text-sm text-gray-800 max-w-xs truncate">\${q.content}</td>
+      <td class="px-4 py-3 text-sm text-gray-800 max-w-xs truncate">\${escHtml(q.content)}</td>
       <td class="px-4 py-3 text-sm text-gray-500">\${q.tags||''}</td>
       <td class="px-4 py-3 text-sm text-center"><span class="text-green-600 font-medium">\${q.correct_count||0}</span></td>
       <td class="px-4 py-3 text-sm text-center"><span class="text-red-500 font-medium">\${q.wrong_count||0}</span></td>
@@ -1116,19 +1108,7 @@ function openQuestionModal(data = null) {
   document.getElementById('q-explanation').value  = data?.explanation || '';
   document.getElementById('q-source').value       = data?.source || '';
   document.getElementById('q-tags').value         = data?.tags || '';
-  document.getElementById('q-audio-url').value    = data?.audio_url || '';
   document.getElementById('q-audio-transcript').value = data?.audio_transcript || '';
-  document.getElementById('audio-upload-status').textContent = '';
-  // 若有音訊 URL 則顯示預覽
-  const previewWrap = document.getElementById('audio-preview-wrap');
-  const audioPreview = document.getElementById('q-audio-preview');
-  if (data?.audio_url) {
-    audioPreview.src = data.audio_url;
-    previewWrap.classList.remove('hidden');
-  } else {
-    audioPreview.src = '';
-    previewWrap.classList.add('hidden');
-  }
   toggleOptions();
   document.getElementById('question-modal').classList.remove('hidden');
 }
@@ -1141,38 +1121,15 @@ function toggleOptions() {
   document.getElementById('audio-section').classList.toggle('hidden', !isListening);
 }
 
-async function uploadAudio() {
-  const fileInput = document.getElementById('q-audio-file');
-  const statusEl  = document.getElementById('audio-upload-status');
-  if (!fileInput.files.length) { alert('請先選擇音訊檔案'); return; }
-  const formData = new FormData();
-  formData.append('audio', fileInput.files[0]);
-  statusEl.textContent = '上傳中...';
-  try {
-    const res = await fetch('/api/audio/upload', {
-      method: 'POST',
-      headers: adminKey ? { 'x-api-key': adminKey } : {},
-      body: formData
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || '上傳失敗');
-    document.getElementById('q-audio-url').value = data.audio_url;
-    const audioPreview = document.getElementById('q-audio-preview');
-    audioPreview.src = data.audio_url;
-    document.getElementById('audio-preview-wrap').classList.remove('hidden');
-    statusEl.textContent = '✅ 上傳成功：' + data.filename;
-  } catch (err) {
-    statusEl.textContent = '❌ ' + err.message;
-  }
-}
-
-function previewAudio() {
-  const fileInput = document.getElementById('q-audio-file');
-  if (!fileInput.files.length) return;
-  const url = URL.createObjectURL(fileInput.files[0]);
-  const audioPreview = document.getElementById('q-audio-preview');
-  audioPreview.src = url;
-  document.getElementById('audio-preview-wrap').classList.remove('hidden');
+function previewTTS() {
+  const text = document.getElementById('q-audio-transcript').value.trim();
+  if (!text) { alert('請先填寫逐字稿'); return; }
+  if (!window.speechSynthesis) { alert('您的瀏覽器不支援 TTS，請改用 Chrome 或 Edge'); return; }
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = 'en-US';
+  utter.rate = 0.85;
+  window.speechSynthesis.speak(utter);
 }
 
 async function editQuestion(id) {
@@ -1201,11 +1158,10 @@ async function saveQuestion() {
     explanation:      document.getElementById('q-explanation').value.trim(),
     source:           document.getElementById('q-source').value.trim(),
     tags:             document.getElementById('q-tags').value.trim(),
-    audio_url:        document.getElementById('q-audio-url').value.trim() || null,
     audio_transcript: document.getElementById('q-audio-transcript').value.trim() || null,
   };
   if (!body.content || !body.answer) { alert('請填寫題目內容與正確答案'); return; }
-  if (body.type === 'listening' && !body.audio_url) { alert('聽力題必須填寫音訊 URL 或先上傳音訊檔案'); return; }
+  if (body.type === 'listening' && !body.audio_transcript) { alert('聽力題請填寫 TTS 朗讀文字（逐字稿）'); return; }
   const url    = editingQuestionId ? '/api/questions/' + editingQuestionId : '/api/questions';
   const method = editingQuestionId ? 'PUT' : 'POST';
   await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
@@ -1282,7 +1238,7 @@ async function loadExamQuestions() {
   document.getElementById('eq-list').innerHTML = data.data.map(q => \`
     <div class="flex items-center gap-2 p-2 rounded hover:bg-gray-50 \${selectedQuestions[q.id] ? 'bg-indigo-50' : ''}">
       <input type="checkbox" id="eq-\${q.id}" \${selectedQuestions[q.id] ? 'checked' : ''} onchange="toggleQuestion(\${q.id})" class="accent-indigo-600">
-      <label for="eq-\${q.id}" class="flex-1 cursor-pointer text-gray-700 truncate">\${q.content}</label>
+      <label for="eq-\${q.id}" class="flex-1 cursor-pointer text-gray-700 truncate">\${escHtml(q.content)}</label>
       <span class="text-xs text-gray-400 shrink-0">\${q.subject_name} \${'★'.repeat(q.difficulty)}</span>
     </div>
   \`).join('') || '<p class="text-gray-400 text-center py-4">沒有題目</p>';
@@ -1333,7 +1289,7 @@ function renderSelectedQuestions() {
   document.getElementById('selected-count').textContent = list.length;
   document.getElementById('selected-questions').innerHTML = list.length ? list.map(q => \`
     <div class="flex items-center gap-2 p-2 rounded bg-indigo-50">
-      <span class="flex-1 text-gray-700 truncate text-xs">\${q.content}</span>
+      <span class="flex-1 text-gray-700 truncate text-xs">\${escHtml(q.content)}</span>
       <span class="text-xs text-gray-500">分值：</span>
       <input type="number" value="\${q.score}" min="1" max="50"
         onchange="selectedQuestions[\${q.id}].score = parseInt(this.value)||5"
@@ -1414,6 +1370,7 @@ async function loadStats() {
 }
 
 // ── Utils ─────────────────────────────────────────────────────────────────
+function escHtml(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
 
 init();
@@ -1494,8 +1451,8 @@ async function loadSubmissions() {
         <tbody>
           \${subs.map(s=>\`
             <tr class="border-b hover:bg-gray-50">
-              <td class="px-4 py-3 font-medium">\${s.student_name}</td>
-              <td class="px-4 py-3 text-gray-500">\${s.student_id||'-'}</td>
+              <td class="px-4 py-3 font-medium">\${escHtml(s.student_name)}</td>
+              <td class="px-4 py-3 text-gray-500">\${escHtml(s.student_id||'-')}</td>
               <td class="px-4 py-3 text-right">\${s.score}/\${s.total_score}</td>
               <td class="px-4 py-3 text-right font-bold \${pctColor(s.percentage)}">\${s.percentage}%</td>
               <td class="px-4 py-3 text-right text-gray-400 text-xs">\${s.submitted_at}</td>
@@ -1507,6 +1464,7 @@ async function loadSubmissions() {
     </div>
   \`;
 }
+function escHtml(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 init();
 </script>
 </body>
@@ -1814,8 +1772,9 @@ function getOptionLabel(q, letter) {
   if (!letter) return '（未作答）';
   const map = { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d };
   const text = map[letter.toUpperCase()];
-  return text ? letter.toUpperCase() + '. ' + text : letter.toUpperCase();
+  return text ? letter.toUpperCase() + '. ' + escHtml(text) : letter.toUpperCase();
 }
+function escHtml(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
 async function loadAnalysis() {
   const res = await fetch('/api/submissions/' + id + '/analysis');
@@ -1870,10 +1829,10 @@ async function loadAnalysis() {
         <span class="text-sm font-medium text-gray-500">第 \${i+1} 題 · \${q.subject_name} · \${'★'.repeat(q.difficulty||1)}</span>
         <span class="text-xs text-red-500">✗ 答錯</span>
       </div>
-      <p class="text-gray-800 mb-2">\${q.content}</p>
+      <p class="text-gray-800 mb-2">\${escHtml(q.content)}</p>
       <div class="text-sm space-y-1">
-        \${q.type==='choice'?[\`<p>你的答案：<span class="text-red-500 font-medium">\${getOptionLabel(q, q.given_answer)}</span></p>\`,\`<p>正確答案：<span class="text-green-600 font-medium">\${getOptionLabel(q, q.correct_answer)}</span></p>\`].join(''):\`<p>你的答案：<span class="text-red-500 font-medium">\${q.given_answer||'（未作答）'}</span></p><p>正確答案：<span class="text-green-600 font-medium">\${q.correct_answer}</span></p>\`}
-        \${q.explanation ? \`<p class="text-gray-500 mt-2 bg-gray-50 p-2 rounded">💡 \${q.explanation}</p>\` : ''}
+        \${q.type==='choice'?[\`<p>你的答案：<span class="text-red-500 font-medium">\${getOptionLabel(q, q.given_answer)}</span></p>\`,\`<p>正確答案：<span class="text-green-600 font-medium">\${getOptionLabel(q, q.correct_answer)}</span></p>\`].join(''):\`<p>你的答案：<span class="text-red-500 font-medium">\${escHtml(q.given_answer)||'（未作答）'}</span></p><p>正確答案：<span class="text-green-600 font-medium">\${escHtml(q.correct_answer)}</span></p>\`}
+        \${q.explanation ? \`<p class="text-gray-500 mt-2 bg-gray-50 p-2 rounded">💡 \${escHtml(q.explanation)}</p>\` : ''}
       </div>
     </div>
   \`).join('') : '<p class="text-gray-400 text-center py-4">🎉 全部答對，沒有弱點題目！</p>';
@@ -1882,8 +1841,8 @@ async function loadAnalysis() {
     <!-- 頂部概覽 -->
     <div class="bg-white rounded-2xl shadow-lg p-8 mb-6 \${pctBg} border">
       <div class="text-center mb-4">
-        <h2 class="text-2xl font-bold text-gray-800 mb-1">\${d.student_name} 的答題分析報告</h2>
-        <p class="text-gray-500 text-sm">\${d.exam_title} ｜ \${d.submitted_at}</p>
+        <h2 class="text-2xl font-bold text-gray-800 mb-1">\${escHtml(d.student_name)} 的答題分析報告</h2>
+        <p class="text-gray-500 text-sm">\${escHtml(d.exam_title)} ｜ \${d.submitted_at}</p>
       </div>
       <div class="flex justify-center gap-12 mt-6">
         <div class="text-center">

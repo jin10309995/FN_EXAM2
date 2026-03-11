@@ -230,28 +230,13 @@ body{font-family:'Noto Sans TC',sans-serif;}
             <div class="flex gap-2 items-center"><span class="w-6 text-sm font-medium text-indigo-600">D.</span><input id="q-opt-d" type="text" class="flex-1 border border-gray-300 rounded px-3 py-1.5 text-sm" placeholder="選項 D"></div>
           </div>
         </div>
-        <!-- 聽力題音訊區塊 -->
-        <div id="audio-section" class="hidden bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3">
-          <p class="text-sm font-medium text-blue-800">🎧 聽力音訊設定</p>
+        <!-- 聽力題 TTS 區塊 -->
+        <div id="audio-section" class="hidden bg-green-50 border border-green-200 rounded-lg p-4 space-y-3">
+          <p class="text-sm font-medium text-green-800">🔊 聽力題 TTS 設定</p>
           <div>
-            <label class="block text-xs text-gray-600 mb-1">上傳音訊檔案（mp3/wav/ogg/m4a，最大 50MB）</label>
-            <div class="flex gap-2 items-center">
-              <input id="q-audio-file" type="file" accept="audio/*" onchange="previewAudio()" class="flex-1 text-sm border border-gray-300 rounded px-2 py-1">
-              <button type="button" onclick="uploadAudio()" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors whitespace-nowrap">上傳</button>
-            </div>
-            <p id="audio-upload-status" class="text-xs text-gray-500 mt-1"></p>
-          </div>
-          <div>
-            <label class="block text-xs text-gray-600 mb-1">或直接輸入音訊 URL</label>
-            <input id="q-audio-url" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm" placeholder="https://example.com/audio.mp3 或 /audio/filename.mp3">
-          </div>
-          <div id="audio-preview-wrap" class="hidden">
-            <label class="block text-xs text-gray-600 mb-1">預覽</label>
-            <audio id="q-audio-preview" controls class="w-full h-8"></audio>
-          </div>
-          <div>
-            <label class="block text-xs text-gray-600 mb-1">逐字稿（選填，僅管理員可見）</label>
-            <textarea id="q-audio-transcript" rows="2" class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm resize-none" placeholder="音訊內容文字稿，幫助核稿與備份..."></textarea>
+            <label class="block text-xs text-gray-600 mb-1">TTS 朗讀文字（學生作答時將由瀏覽器朗讀此內容）</label>
+            <textarea id="q-audio-transcript" rows="2" class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm resize-none" placeholder="例如：What color is the sky? / The dog is running fast."></textarea>
+            <button type="button" onclick="previewTTS()" class="mt-1.5 px-3 py-1 bg-green-600 hover:bg-green-700 text-white text-xs rounded transition-colors">🔊 預覽 TTS 朗讀</button>
           </div>
         </div>
         <div class="grid grid-cols-2 gap-3">
@@ -497,7 +482,7 @@ async function loadQualityReport() {
   if (grade) params.set('grade_level', grade);
   const r = await fetch('/api/analytics/question-quality?' + params, { headers: { 'x-api-key': document.getElementById('api_key')?.value || '' } });
   const data = await r.json();
-  if (!r.ok) { document.getElementById('ml-quality-table').innerHTML = `<div class="text-center py-8 text-red-500">${data.error}</div>`; return; }
+  if (!r.ok) { document.getElementById('ml-quality-table').innerHTML = `<div class="text-center py-8 text-red-500">${escHtml(data.error)}</div>`; return; }
 
   document.getElementById('ml-quality-summary').innerHTML = [
     mlStat('分析題數', data.summary.total),
@@ -552,7 +537,7 @@ async function loadCalibration() {
   if (grade) params.set('grade_level', grade);
   const r = await fetch('/api/analytics/difficulty-calibration?' + params, { headers: { 'x-api-key': document.getElementById('api_key')?.value || '' } });
   const data = await r.json();
-  if (!r.ok) { document.getElementById('cal-table').innerHTML = `<div class="text-center py-8 text-red-500">${data.error}</div>`; return; }
+  if (!r.ok) { document.getElementById('cal-table').innerHTML = `<div class="text-center py-8 text-red-500">${escHtml(data.error)}</div>`; return; }
 
   document.getElementById('cal-summary').innerHTML = [
     mlStat('總題數', data.summary.total),
@@ -587,7 +572,7 @@ async function loadCalibration() {
             <td class="px-3 py-2 text-center">${q.pass_rate !== null ? q.pass_rate + '%' : '—'}</td>
             <td class="px-3 py-2 text-center">${q.total_attempts}</td>
             <td class="px-3 py-2 text-center font-bold ${q.deviation===null?'text-gray-400':q.is_anomalous?'text-red-500':Math.abs(q.deviation)>=1?'text-yellow-600':'text-gray-600'}">${q.deviation !== null ? (q.deviation > 0 ? '+' : '') + q.deviation : '—'}</td>
-            <td class="px-3 py-2 text-xs text-gray-600 max-w-xs truncate">${q.content}</td>
+            <td class="px-3 py-2 text-xs text-gray-600 max-w-xs truncate">${escHtml(q.content)}</td>
           </tr>
         `).join('')}
       </tbody>
@@ -606,7 +591,7 @@ async function loadStudentAbility() {
   const r = await fetch('/api/analytics/student-ability?' + params, { headers: { 'x-api-key': document.getElementById('api_key')?.value || '' } });
   const data = await r.json();
   const el = document.getElementById('ability-result');
-  if (!r.ok) { el.innerHTML = `<div class="bg-red-50 border border-red-200 rounded-xl p-4 text-red-600">${data.error}</div>`; return; }
+  if (!r.ok) { el.innerHTML = `<div class="bg-red-50 border border-red-200 rounded-xl p-4 text-red-600">${escHtml(data.error)}</div>`; return; }
   const abilityColor = a => a >= 4 ? 'text-green-600' : a >= 2.5 ? 'text-yellow-600' : 'text-red-500';
   const abilityBar = a => {
     if (a === null) return '<div class="text-gray-400 text-xs">資料不足</div>';
@@ -674,7 +659,7 @@ async function loadQuestions(page = 1) {
       <td class="px-4 py-3 text-sm">${typeLabel[q.type]||q.type}</td>
       <td class="px-4 py-3 text-sm">${'★'.repeat(q.difficulty)}</td>
       <td class="px-4 py-3 text-sm"><span class="${gradeCls[q.grade_level]||'bg-gray-50 text-gray-700'} text-xs px-2 py-0.5 rounded">${gradeLabel[q.grade_level]||q.grade_level}</span></td>
-      <td class="px-4 py-3 text-sm text-gray-800 max-w-xs truncate">${q.content}</td>
+      <td class="px-4 py-3 text-sm text-gray-800 max-w-xs truncate">${escHtml(q.content)}</td>
       <td class="px-4 py-3 text-sm text-gray-500">${q.tags||''}</td>
       <td class="px-4 py-3 text-sm text-center"><span class="text-green-600 font-medium">${q.correct_count||0}</span></td>
       <td class="px-4 py-3 text-sm text-center"><span class="text-red-500 font-medium">${q.wrong_count||0}</span></td>
@@ -720,19 +705,7 @@ function openQuestionModal(data = null) {
   document.getElementById('q-explanation').value  = data?.explanation || '';
   document.getElementById('q-source').value       = data?.source || '';
   document.getElementById('q-tags').value         = data?.tags || '';
-  document.getElementById('q-audio-url').value    = data?.audio_url || '';
   document.getElementById('q-audio-transcript').value = data?.audio_transcript || '';
-  document.getElementById('audio-upload-status').textContent = '';
-  // 若有音訊 URL 則顯示預覽
-  const previewWrap = document.getElementById('audio-preview-wrap');
-  const audioPreview = document.getElementById('q-audio-preview');
-  if (data?.audio_url) {
-    audioPreview.src = data.audio_url;
-    previewWrap.classList.remove('hidden');
-  } else {
-    audioPreview.src = '';
-    previewWrap.classList.add('hidden');
-  }
   toggleOptions();
   document.getElementById('question-modal').classList.remove('hidden');
 }
@@ -745,38 +718,15 @@ function toggleOptions() {
   document.getElementById('audio-section').classList.toggle('hidden', !isListening);
 }
 
-async function uploadAudio() {
-  const fileInput = document.getElementById('q-audio-file');
-  const statusEl  = document.getElementById('audio-upload-status');
-  if (!fileInput.files.length) { alert('請先選擇音訊檔案'); return; }
-  const formData = new FormData();
-  formData.append('audio', fileInput.files[0]);
-  statusEl.textContent = '上傳中...';
-  try {
-    const res = await fetch('/api/audio/upload', {
-      method: 'POST',
-      headers: adminKey ? { 'x-api-key': adminKey } : {},
-      body: formData
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || '上傳失敗');
-    document.getElementById('q-audio-url').value = data.audio_url;
-    const audioPreview = document.getElementById('q-audio-preview');
-    audioPreview.src = data.audio_url;
-    document.getElementById('audio-preview-wrap').classList.remove('hidden');
-    statusEl.textContent = '✅ 上傳成功：' + data.filename;
-  } catch (err) {
-    statusEl.textContent = '❌ ' + err.message;
-  }
-}
-
-function previewAudio() {
-  const fileInput = document.getElementById('q-audio-file');
-  if (!fileInput.files.length) return;
-  const url = URL.createObjectURL(fileInput.files[0]);
-  const audioPreview = document.getElementById('q-audio-preview');
-  audioPreview.src = url;
-  document.getElementById('audio-preview-wrap').classList.remove('hidden');
+function previewTTS() {
+  const text = document.getElementById('q-audio-transcript').value.trim();
+  if (!text) { alert('請先填寫逐字稿'); return; }
+  if (!window.speechSynthesis) { alert('您的瀏覽器不支援 TTS，請改用 Chrome 或 Edge'); return; }
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = 'en-US';
+  utter.rate = 0.85;
+  window.speechSynthesis.speak(utter);
 }
 
 async function editQuestion(id) {
@@ -805,11 +755,10 @@ async function saveQuestion() {
     explanation:      document.getElementById('q-explanation').value.trim(),
     source:           document.getElementById('q-source').value.trim(),
     tags:             document.getElementById('q-tags').value.trim(),
-    audio_url:        document.getElementById('q-audio-url').value.trim() || null,
     audio_transcript: document.getElementById('q-audio-transcript').value.trim() || null,
   };
   if (!body.content || !body.answer) { alert('請填寫題目內容與正確答案'); return; }
-  if (body.type === 'listening' && !body.audio_url) { alert('聽力題必須填寫音訊 URL 或先上傳音訊檔案'); return; }
+  if (body.type === 'listening' && !body.audio_transcript) { alert('聽力題請填寫 TTS 朗讀文字（逐字稿）'); return; }
   const url    = editingQuestionId ? '/api/questions/' + editingQuestionId : '/api/questions';
   const method = editingQuestionId ? 'PUT' : 'POST';
   await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
@@ -886,7 +835,7 @@ async function loadExamQuestions() {
   document.getElementById('eq-list').innerHTML = data.data.map(q => `
     <div class="flex items-center gap-2 p-2 rounded hover:bg-gray-50 ${selectedQuestions[q.id] ? 'bg-indigo-50' : ''}">
       <input type="checkbox" id="eq-${q.id}" ${selectedQuestions[q.id] ? 'checked' : ''} onchange="toggleQuestion(${q.id})" class="accent-indigo-600">
-      <label for="eq-${q.id}" class="flex-1 cursor-pointer text-gray-700 truncate">${q.content}</label>
+      <label for="eq-${q.id}" class="flex-1 cursor-pointer text-gray-700 truncate">${escHtml(q.content)}</label>
       <span class="text-xs text-gray-400 shrink-0">${q.subject_name} ${'★'.repeat(q.difficulty)}</span>
     </div>
   `).join('') || '<p class="text-gray-400 text-center py-4">沒有題目</p>';
@@ -937,7 +886,7 @@ function renderSelectedQuestions() {
   document.getElementById('selected-count').textContent = list.length;
   document.getElementById('selected-questions').innerHTML = list.length ? list.map(q => `
     <div class="flex items-center gap-2 p-2 rounded bg-indigo-50">
-      <span class="flex-1 text-gray-700 truncate text-xs">${q.content}</span>
+      <span class="flex-1 text-gray-700 truncate text-xs">${escHtml(q.content)}</span>
       <span class="text-xs text-gray-500">分值：</span>
       <input type="number" value="${q.score}" min="1" max="50"
         onchange="selectedQuestions[${q.id}].score = parseInt(this.value)||5"
@@ -1018,6 +967,7 @@ async function loadStats() {
 }
 
 // ── Utils ─────────────────────────────────────────────────────────────────
+function escHtml(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
 
 init();

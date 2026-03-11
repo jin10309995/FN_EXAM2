@@ -23,8 +23,9 @@ function getOptionLabel(q, letter) {
   if (!letter) return '（未作答）';
   const map = { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d };
   const text = map[letter.toUpperCase()];
-  return text ? letter.toUpperCase() + '. ' + text : letter.toUpperCase();
+  return text ? letter.toUpperCase() + '. ' + escHtml(text) : letter.toUpperCase();
 }
+function escHtml(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
 async function loadAnalysis() {
   const res = await fetch('/api/submissions/' + id + '/analysis');
@@ -79,10 +80,10 @@ async function loadAnalysis() {
         <span class="text-sm font-medium text-gray-500">第 ${i+1} 題 · ${q.subject_name} · ${'★'.repeat(q.difficulty||1)}</span>
         <span class="text-xs text-red-500">✗ 答錯</span>
       </div>
-      <p class="text-gray-800 mb-2">${q.content}</p>
+      <p class="text-gray-800 mb-2">${escHtml(q.content)}</p>
       <div class="text-sm space-y-1">
-        ${q.type==='choice'?[`<p>你的答案：<span class="text-red-500 font-medium">${getOptionLabel(q, q.given_answer)}</span></p>`,`<p>正確答案：<span class="text-green-600 font-medium">${getOptionLabel(q, q.correct_answer)}</span></p>`].join(''):`<p>你的答案：<span class="text-red-500 font-medium">${q.given_answer||'（未作答）'}</span></p><p>正確答案：<span class="text-green-600 font-medium">${q.correct_answer}</span></p>`}
-        ${q.explanation ? `<p class="text-gray-500 mt-2 bg-gray-50 p-2 rounded">💡 ${q.explanation}</p>` : ''}
+        ${q.type==='choice'?[`<p>你的答案：<span class="text-red-500 font-medium">${getOptionLabel(q, q.given_answer)}</span></p>`,`<p>正確答案：<span class="text-green-600 font-medium">${getOptionLabel(q, q.correct_answer)}</span></p>`].join(''):`<p>你的答案：<span class="text-red-500 font-medium">${escHtml(q.given_answer)||'（未作答）'}</span></p><p>正確答案：<span class="text-green-600 font-medium">${escHtml(q.correct_answer)}</span></p>`}
+        ${q.explanation ? `<p class="text-gray-500 mt-2 bg-gray-50 p-2 rounded">💡 ${escHtml(q.explanation)}</p>` : ''}
       </div>
     </div>
   `).join('') : '<p class="text-gray-400 text-center py-4">🎉 全部答對，沒有弱點題目！</p>';
@@ -91,8 +92,8 @@ async function loadAnalysis() {
     <!-- 頂部概覽 -->
     <div class="bg-white rounded-2xl shadow-lg p-8 mb-6 ${pctBg} border">
       <div class="text-center mb-4">
-        <h2 class="text-2xl font-bold text-gray-800 mb-1">${d.student_name} 的答題分析報告</h2>
-        <p class="text-gray-500 text-sm">${d.exam_title} ｜ ${d.submitted_at}</p>
+        <h2 class="text-2xl font-bold text-gray-800 mb-1">${escHtml(d.student_name)} 的答題分析報告</h2>
+        <p class="text-gray-500 text-sm">${escHtml(d.exam_title)} ｜ ${d.submitted_at}</p>
       </div>
       <div class="flex justify-center gap-12 mt-6">
         <div class="text-center">

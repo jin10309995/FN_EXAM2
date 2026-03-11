@@ -25,8 +25,9 @@ function getOptionLabel(q, letter) {
   if (!letter) return '（未作答）';
   const map = { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d };
   const text = map[letter.toUpperCase()];
-  return text ? letter.toUpperCase() + '. ' + text : letter.toUpperCase();
+  return text ? letter.toUpperCase() + '. ' + escHtml(text) : letter.toUpperCase();
 }
+function escHtml(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 async function loadResult() {
   const res = await fetch('/api/submissions/' + id);
   const data = await res.json();
@@ -34,7 +35,7 @@ async function loadResult() {
   const color = pct >= 80 ? 'text-green-600' : pct >= 60 ? 'text-yellow-600' : 'text-red-600';
   document.getElementById('result-container').innerHTML = `
     <div class="bg-white rounded-2xl shadow-lg p-8 mb-6 text-center">
-      <h2 class="text-2xl font-bold text-gray-800 mb-2">${data.student_name} 的成績</h2>
+      <h2 class="text-2xl font-bold text-gray-800 mb-2">${escHtml(data.student_name)} 的成績</h2>
       <div class="text-7xl font-bold ${color} my-6">${pct}%</div>
       <p class="text-gray-500">${data.score} / ${data.total_score} 分 &nbsp;·&nbsp; 作答時間: ${data.submitted_at}</p>
     </div>
@@ -47,11 +48,11 @@ async function loadResult() {
               ${d.is_correct ? '✓ 答對 +'+d.score_earned+'分' : '✗ 答錯'}
             </span>
           </div>
-          <p class="text-gray-800 mb-3">${d.content}</p>
+          <p class="text-gray-800 mb-3">${escHtml(d.content)}</p>
           <div class="text-sm space-y-1">
-            <p>你的答案：<span class="${d.is_correct ? 'text-green-600' : 'text-red-600'} font-medium">${d.type === 'choice' ? getOptionLabel(d, d.given_answer) : (d.given_answer || '（未作答）')}</span></p>
-            ${!d.is_correct ? `<p>正確答案：<span class="text-green-600 font-medium">${d.type === 'choice' ? getOptionLabel(d, d.correct_answer) : d.correct_answer}</span></p>` : ''}
-            ${d.explanation ? `<p class="text-gray-500 mt-2 bg-gray-50 p-2 rounded">💡 ${d.explanation}</p>` : ''}
+            <p>你的答案：<span class="${d.is_correct ? 'text-green-600' : 'text-red-600'} font-medium">${d.type === 'choice' ? getOptionLabel(d, d.given_answer) : (escHtml(d.given_answer) || '（未作答）')}</span></p>
+            ${!d.is_correct ? `<p>正確答案：<span class="text-green-600 font-medium">${d.type === 'choice' ? getOptionLabel(d, d.correct_answer) : escHtml(d.correct_answer)}</span></p>` : ''}
+            ${d.explanation ? `<p class="text-gray-500 mt-2 bg-gray-50 p-2 rounded">💡 ${escHtml(d.explanation)}</p>` : ''}
           </div>
         </div>
       `).join('')}

@@ -17,7 +17,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS questions (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     subject_id   INTEGER NOT NULL REFERENCES subjects(id),
-    type         TEXT NOT NULL CHECK(type IN ('choice','fill','calculation')),
+    type         TEXT NOT NULL CHECK(type IN ('choice','fill','calculation','listening')),
     difficulty   INTEGER NOT NULL CHECK(difficulty BETWEEN 1 AND 5),
     content      TEXT NOT NULL,
     option_a     TEXT,
@@ -118,7 +118,99 @@ if (!subjectCols.includes('grade_level')) {
   }
 }
 
-// Seed subjects（包含 grade_level）
+// Migration: update questions type CHECK constraint to include 'listening'
+{
+  const schemaRow = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='questions'`).get();
+  if (schemaRow && !schemaRow.sql.includes("'listening'")) {
+    db.exec(`PRAGMA foreign_keys = OFF`);
+    // legacy_alter_table prevents SQLite from auto-rewriting FK references in other
+    // tables when we rename questions → questions_old, avoiding dangling references.
+    db.exec(`PRAGMA legacy_alter_table = ON`);
+    const migrateConstraint = db.transaction(() => {
+      db.exec(`ALTER TABLE questions RENAME TO questions_old`);
+      db.exec(`
+        CREATE TABLE questions (
+          id               INTEGER PRIMARY KEY AUTOINCREMENT,
+          subject_id       INTEGER NOT NULL REFERENCES subjects(id),
+          type             TEXT NOT NULL CHECK(type IN ('choice','fill','calculation','listening')),
+          difficulty       INTEGER NOT NULL CHECK(difficulty BETWEEN 1 AND 5),
+          content          TEXT NOT NULL,
+          option_a         TEXT,
+          option_b         TEXT,
+          option_c         TEXT,
+          option_d         TEXT,
+          answer           TEXT NOT NULL,
+          explanation      TEXT,
+          source           TEXT,
+          tags             TEXT,
+          created_at       TEXT DEFAULT (datetime('now','localtime')),
+          updated_at       TEXT DEFAULT (datetime('now','localtime')),
+          correct_count    INTEGER DEFAULT 0,
+          wrong_count      INTEGER DEFAULT 0,
+          is_archived      INTEGER DEFAULT 0,
+          audio_url        TEXT,
+          audio_transcript TEXT,
+          grade_level      TEXT NOT NULL DEFAULT 'junior_high'
+        )
+      `);
+      db.exec(`INSERT INTO questions
+        (id, subject_id, type, difficulty, content, option_a, option_b, option_c, option_d,
+         answer, explanation, source, tags, created_at, updated_at,
+         correct_count, wrong_count, is_archived, audio_url, audio_transcript, grade_level)
+        SELECT id, subject_id, type, difficulty, content, option_a, option_b, option_c, option_d,
+         answer, explanation, source, tags, created_at, updated_at,
+         COALESCE(correct_count, 0), COALESCE(wrong_count, 0), COALESCE(is_archived, 0),
+         audio_url, audio_transcript, COALESCE(grade_level, 'junior_high')
+        FROM questions_old`);
+      db.exec(`DROP TABLE questions_old`);
+    });
+    migrateConstraint();
+    db.exec(`PRAGMA legacy_alter_table = OFF`);
+    db.exec(`PRAGMA foreign_keys = ON`);
+  }
+}
+
+// Migration: fix broken FK references in exam_questions and answer_details caused by
+// the previous migration which renamed questions→questions_old without legacy_alter_table,
+// causing SQLite to auto-rewrite REFERENCES in dependent tables to "questions_old".
+{
+  const eqRow = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='exam_questions'`).get();
+  if (eqRow && eqRow.sql.includes('"questions_old"')) {
+    db.exec(`PRAGMA foreign_keys = OFF`);
+    const fixFKs = db.transaction(() => {
+      db.exec(`ALTER TABLE exam_questions RENAME TO exam_questions_bak`);
+      db.exec(`
+        CREATE TABLE exam_questions (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          exam_id     INTEGER NOT NULL REFERENCES exams(id) ON DELETE CASCADE,
+          question_id INTEGER NOT NULL REFERENCES questions(id),
+          sort_order  INTEGER NOT NULL DEFAULT 0,
+          score       INTEGER NOT NULL DEFAULT 5
+        )
+      `);
+      db.exec(`INSERT INTO exam_questions SELECT * FROM exam_questions_bak`);
+      db.exec(`DROP TABLE exam_questions_bak`);
+
+      db.exec(`ALTER TABLE answer_details RENAME TO answer_details_bak`);
+      db.exec(`
+        CREATE TABLE answer_details (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          submission_id INTEGER NOT NULL REFERENCES submissions(id) ON DELETE CASCADE,
+          question_id   INTEGER NOT NULL REFERENCES questions(id),
+          given_answer  TEXT,
+          is_correct    INTEGER,
+          score_earned  REAL DEFAULT 0
+        )
+      `);
+      db.exec(`INSERT INTO answer_details SELECT * FROM answer_details_bak`);
+      db.exec(`DROP TABLE answer_details_bak`);
+    });
+    fixFKs();
+    db.exec(`PRAGMA foreign_keys = ON`);
+  }
+}
+
+
 const insertSubject = db.prepare(`INSERT OR IGNORE INTO subjects (name, code, grade_level) VALUES (?, ?, ?)`);
 [
   // 升國中科目

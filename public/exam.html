@@ -90,8 +90,8 @@ function renderQuestions() {
         <span class="text-sm font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">第 ${i+1} 題 · ${q.subject_name} · ${q.score}分${q.type === 'listening' ? ' · 🎧 聽力' : ''}</span>
         <span class="text-xs text-gray-400">${'★'.repeat(q.difficulty || 1)}${'☆'.repeat(5-(q.difficulty||1))}</span>
       </div>
-      ${q.audio_url ? renderAudioPlayer(q, i) : ''}
-      <p class="text-gray-800 mb-4 leading-relaxed">${q.content}</p>
+      ${q.type === 'listening' ? renderTTSPlayer(q, i) : ''}
+      <p class="text-gray-800 mb-4 leading-relaxed">${escHtml(q.content)}</p>
       ${(q.type === 'choice' || q.type === 'listening') ? renderChoices(q, i) : renderFill(q, i)}
     </div>
   `).join('') + '<div class="h-24"></div>';
@@ -102,46 +102,50 @@ function renderQuestions() {
   updateProgress();
 }
 
-function renderAudioPlayer(q, idx) {
+function renderTTSPlayer(q, idx) {
   return `
-    <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+    <div class="bg-green-50 border border-green-200 rounded-lg p-3 mb-4">
       <div class="flex items-center gap-2 mb-2">
-        <span class="text-blue-700 font-medium text-sm">🎧 請先聆聽音訊再作答</span>
-        <span id="play-count-${idx}" class="text-xs text-blue-500 ml-auto">已播放：0 / ${AUDIO_MAX_PLAYS} 次</span>
+        <span class="text-green-700 font-medium text-sm">🔊 請先聆聽題目再作答</span>
+        <span id="play-count-${idx}" class="text-xs text-green-500 ml-auto">已播放：0 / ${AUDIO_MAX_PLAYS} 次</span>
       </div>
-      <audio id="audio-${idx}" src="${q.audio_url}" preload="none" controlsList="nodownload"
-        class="w-full h-10" onended="onAudioEnded(${idx})"></audio>
-      <button id="play-btn-${idx}" onclick="playAudio(${idx})"
-        class="mt-2 w-full py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-colors">
-        ▶ 播放音訊
+      <button id="play-btn-${idx}" onclick="speakTTS(${idx})"
+        class="w-full py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium transition-colors">
+        🔊 朗讀題目
       </button>
     </div>
   `;
 }
 
-function playAudio(idx) {
-  const audio = document.getElementById(`audio-${idx}`);
+function speakTTS(idx) {
   const btn   = document.getElementById(`play-btn-${idx}`);
   const count = audioPlayCounts[idx] || 0;
   if (count >= AUDIO_MAX_PLAYS) {
     alert(`已達播放上限（${AUDIO_MAX_PLAYS} 次），無法再播放`);
     return;
   }
+  if (!window.speechSynthesis) {
+    alert('您的瀏覽器不支援語音朗讀功能，請改用 Chrome 或 Edge 瀏覽器');
+    return;
+  }
+  const q    = examData.questions[idx];
+  const text = q.audio_transcript || q.content;
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = 'en-US';
+  utter.rate = 0.85;
   audioPlayCounts[idx] = count + 1;
   document.getElementById(`play-count-${idx}`).textContent = `已播放：${audioPlayCounts[idx]} / ${AUDIO_MAX_PLAYS} 次`;
   if (audioPlayCounts[idx] >= AUDIO_MAX_PLAYS) {
     btn.textContent = '已達播放上限';
     btn.disabled = true;
-    btn.classList.replace('bg-blue-600','bg-gray-400');
-    btn.classList.replace('hover:bg-blue-700','hover:bg-gray-400');
+    btn.classList.replace('bg-green-600', 'bg-gray-400');
+    btn.classList.replace('hover:bg-green-700', 'hover:bg-gray-400');
+  } else {
+    btn.textContent = '播放中...';
+    utter.onend = () => { if (btn && !btn.disabled) btn.textContent = '🔊 再聽一次'; };
   }
-  audio.currentTime = 0;
-  audio.play();
-}
-
-function onAudioEnded(idx) {
-  const btn = document.getElementById(`play-btn-${idx}`);
-  if (btn && !btn.disabled) btn.textContent = '▶ 再聽一次';
+  window.speechSynthesis.speak(utter);
 }
 
 function renderChoices(q, idx) {
@@ -209,6 +213,7 @@ async function submitAnswers() {
   }
 }
 
+function escHtml(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 loadExam();
 </script>
 </body>

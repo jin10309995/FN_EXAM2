@@ -30,8 +30,8 @@ async function loadExams() {
   container.innerHTML = active.map(e => `
     <div class="bg-white rounded-xl shadow p-6 flex justify-between items-center">
       <div>
-        <h3 class="text-lg font-bold text-gray-800">${e.title}</h3>
-        <p class="text-sm text-gray-500 mt-1">${e.description || ''}</p>
+        <h3 class="text-lg font-bold text-gray-800">${escHtml(e.title)}</h3>
+        <p class="text-sm text-gray-500 mt-1">${escHtml(e.description || '')}</p>
         <div class="flex gap-4 mt-2 text-sm text-gray-600">
           <span>📋 ${e.question_count} 題</span>
           <span>⏱ ${e.duration_min} 分鐘</span>
@@ -42,6 +42,7 @@ async function loadExams() {
     </div>
   `).join('');
 }
+function escHtml(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 loadExams();
 </script>
 </body>

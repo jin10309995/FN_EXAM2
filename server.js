@@ -231,7 +231,7 @@ app.get('/api/exams/:id/take', (req, res) => {
   const questions = db.prepare(`
     SELECT eq.sort_order, eq.score, q.id, q.type, q.content, q.subject_id,
            q.option_a, q.option_b, q.option_c, q.option_d, q.difficulty,
-           q.audio_url, s.name as subject_name
+           q.audio_url, q.audio_transcript, s.name as subject_name
     FROM exam_questions eq
     JOIN questions q ON q.id = eq.question_id
     JOIN subjects s ON s.id = q.subject_id
