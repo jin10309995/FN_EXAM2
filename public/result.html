@@ -12,7 +12,7 @@
 <body class="bg-gray-50 min-h-screen">
 <header class="bg-indigo-700 text-white py-4 px-6 shadow">
   <div class="max-w-4xl mx-auto flex items-center gap-3">
-    <a href="/" class="text-indigo-200 hover:text-white">🏠</a>
+    <a href="/" class="flex items-center gap-1 text-indigo-200 hover:text-white bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors">🏠 首頁</a>
     <span class="text-lg font-bold">考試結果</span>
   </div>
 </header>
@@ -40,22 +40,31 @@ async function loadResult() {
       <p class="text-gray-500">${data.score} / ${data.total_score} 分 &nbsp;·&nbsp; 作答時間: ${data.submitted_at}</p>
     </div>
     <div class="space-y-4">
-      ${data.details.map((d,i) => `
-        <div class="bg-white rounded-xl shadow p-5 border-l-4 ${d.is_correct ? 'border-green-400' : 'border-red-400'}">
+      ${data.details.map((d,i) => {
+        const isDontKnow = d.given_answer === '__dont_know__';
+        const isPending = d.grading_status === 'pending';
+        const borderColor = d.is_correct ? 'border-green-400' : isDontKnow ? 'border-orange-400' : isPending ? 'border-blue-400' : 'border-red-400';
+        const statusColor = d.is_correct ? 'text-green-600' : isDontKnow ? 'text-orange-600' : isPending ? 'text-blue-600' : 'text-red-600';
+        const statusText  = d.is_correct ? '✓ 答對 +'+d.score_earned+'分' : isDontKnow ? '🤷 我不會' : isPending ? '⏳ 待批改' : '✗ 答錯';
+        const givenDisplay = isDontKnow ? '<span class="text-orange-600 font-medium">🤷 我不會</span>'
+          : isPending ? `<span class="text-blue-600">${escHtml(d.given_answer) || '（未作答）'}</span>`
+          : `<span class="${d.is_correct ? 'text-green-600' : 'text-red-600'} font-medium">${d.type === 'choice' ? getOptionLabel(d, d.given_answer) : (escHtml(d.given_answer) || '（未作答）')}</span>`;
+        return `
+        <div class="bg-white rounded-xl shadow p-5 border-l-4 ${borderColor}">
           <div class="flex justify-between mb-2">
             <span class="font-medium text-gray-700">第 ${i+1} 題</span>
-            <span class="${d.is_correct ? 'text-green-600' : 'text-red-600'} font-bold">
-              ${d.is_correct ? '✓ 答對 +'+d.score_earned+'分' : '✗ 答錯'}
-            </span>
+            <span class="${statusColor} font-bold">${statusText}</span>
           </div>
           <p class="text-gray-800 mb-3">${escHtml(d.content)}</p>
           <div class="text-sm space-y-1">
-            <p>你的答案：<span class="${d.is_correct ? 'text-green-600' : 'text-red-600'} font-medium">${d.type === 'choice' ? getOptionLabel(d, d.given_answer) : (escHtml(d.given_answer) || '（未作答）')}</span></p>
-            ${!d.is_correct ? `<p>正確答案：<span class="text-green-600 font-medium">${d.type === 'choice' ? getOptionLabel(d, d.correct_answer) : escHtml(d.correct_answer)}</span></p>` : ''}
+            <p>你的答案：${givenDisplay}</p>
+            ${(!d.is_correct && !isDontKnow && !isPending) ? `<p>正確答案：<span class="text-green-600 font-medium">${d.type === 'choice' ? getOptionLabel(d, d.correct_answer) : escHtml(d.correct_answer)}</span></p>` : ''}
+            ${isDontKnow ? `<p>正確答案：<span class="text-green-600 font-medium">${d.type === 'choice' ? getOptionLabel(d, d.correct_answer) : escHtml(d.correct_answer)}</span></p><p class="text-orange-500 text-xs mt-1">📌 此題已標記為需加強，出題時將優先複習</p>` : ''}
+            ${isPending ? '<p class="text-blue-500 text-xs mt-1">📋 此題為寫作/口說題，將由老師批改後更新分數</p>' : ''}
             ${d.explanation ? `<p class="text-gray-500 mt-2 bg-gray-50 p-2 rounded">💡 ${escHtml(d.explanation)}</p>` : ''}
           </div>
-        </div>
-      `).join('')}
+        </div>`;
+      }).join('')}
     </div>
     <div class="mt-6 text-center flex gap-4 justify-center">
       <a href="/exam-list.html" class="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3 rounded-lg font-medium transition-colors">返回考試列表</a>

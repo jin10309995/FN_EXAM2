@@ -10,7 +10,7 @@
 <body class="bg-gray-50 min-h-screen">
 <header class="bg-emerald-700 text-white py-4 px-6 shadow">
   <div class="max-w-4xl mx-auto flex items-center gap-3">
-    <a href="/" class="text-emerald-200 hover:text-white">🏠</a>
+    <a href="/" class="flex items-center gap-1 text-emerald-200 hover:text-white bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors">🏠 首頁</a>
     <span class="text-lg font-bold">📊 答題分析報告</span>
   </div>
 </header>
@@ -74,19 +74,30 @@ async function loadAnalysis() {
     }).join('');
 
   // 弱點題目
-  const weakHtml = d.weak_questions.length ? d.weak_questions.map((q, i) => `
-    <div class="bg-white rounded-xl shadow p-5 border-l-4 border-red-400 mb-3">
+  const weakHtml = d.weak_questions.length ? d.weak_questions.map((q, i) => {
+    const isDontKnow = q.given_answer === '__dont_know__';
+    const borderCls  = isDontKnow ? 'border-orange-400' : 'border-red-400';
+    const statusTag  = isDontKnow ? '<span class="text-xs text-orange-500">🤷 我不會</span>' : '<span class="text-xs text-red-500">✗ 答錯</span>';
+    const givenHtml  = isDontKnow
+      ? '<p>你的答案：<span class="text-orange-600 font-medium">🤷 我不會</span></p>'
+      : (q.type==='choice'
+          ? `<p>你的答案：<span class="text-red-500 font-medium">${getOptionLabel(q, q.given_answer)}</span></p>`
+          : `<p>你的答案：<span class="text-red-500 font-medium">${escHtml(q.given_answer)||'（未作答）'}</span></p>`);
+    return `
+    <div class="bg-white rounded-xl shadow p-5 border-l-4 ${borderCls} mb-3">
       <div class="flex justify-between mb-2">
         <span class="text-sm font-medium text-gray-500">第 ${i+1} 題 · ${q.subject_name} · ${'★'.repeat(q.difficulty||1)}</span>
-        <span class="text-xs text-red-500">✗ 答錯</span>
+        ${statusTag}
       </div>
       <p class="text-gray-800 mb-2">${escHtml(q.content)}</p>
       <div class="text-sm space-y-1">
-        ${q.type==='choice'?[`<p>你的答案：<span class="text-red-500 font-medium">${getOptionLabel(q, q.given_answer)}</span></p>`,`<p>正確答案：<span class="text-green-600 font-medium">${getOptionLabel(q, q.correct_answer)}</span></p>`].join(''):`<p>你的答案：<span class="text-red-500 font-medium">${escHtml(q.given_answer)||'（未作答）'}</span></p><p>正確答案：<span class="text-green-600 font-medium">${escHtml(q.correct_answer)}</span></p>`}
+        ${givenHtml}
+        ${q.type==='choice' ? `<p>正確答案：<span class="text-green-600 font-medium">${getOptionLabel(q, q.correct_answer)}</span></p>` : `<p>正確答案：<span class="text-green-600 font-medium">${escHtml(q.correct_answer)}</span></p>`}
         ${q.explanation ? `<p class="text-gray-500 mt-2 bg-gray-50 p-2 rounded">💡 ${escHtml(q.explanation)}</p>` : ''}
       </div>
     </div>
-  `).join('') : '<p class="text-gray-400 text-center py-4">🎉 全部答對，沒有弱點題目！</p>';
+  `;
+  }).join('') : '<p class="text-gray-400 text-center py-4">🎉 全部答對，沒有弱點題目！</p>';
 
   document.getElementById('analysis-container').innerHTML = `
     <!-- 頂部概覽 -->
@@ -112,6 +123,11 @@ async function loadAnalysis() {
           <div class="text-4xl font-bold text-red-500">${d.wrong_count}</div>
           <p class="text-gray-500 text-sm mt-1">答錯</p>
         </div>
+        ${d.dont_know_count > 0 ? `
+        <div class="text-center">
+          <div class="text-4xl font-bold text-orange-500">${d.dont_know_count}</div>
+          <p class="text-gray-500 text-sm mt-1">我不會</p>
+        </div>` : ''}
       </div>
     </div>
 

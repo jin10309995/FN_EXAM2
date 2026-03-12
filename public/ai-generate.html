@@ -12,7 +12,7 @@
 <body class="bg-gray-50 min-h-screen">
 <header class="bg-indigo-700 text-white py-4 px-6 shadow">
   <div class="max-w-5xl mx-auto flex items-center gap-3">
-    <a href="/" class="text-indigo-200 hover:text-white">🏠</a>
+    <a href="/" class="flex items-center gap-1 text-indigo-200 hover:text-white bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors">🏠 首頁</a>
     <span class="text-lg font-bold">🤖 AI 智慧出題</span>
   </div>
 </header>
@@ -65,6 +65,7 @@
           <option value="grade_8">國二（八年級）</option>
           <option value="grade_9">國三（九年級）</option>
           <option value="bctest">國中教育會考</option>
+          <option value="gept_elementary">全民英檢初級</option>
         </select>
       </div>
 
@@ -78,7 +79,6 @@
         <select id="type" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
           <option value="choice">單選題</option>
           <option value="fill">填空題</option>
-          <option value="calculation">計算題</option>
         </select>
       </div>
 
@@ -194,7 +194,7 @@ async function generate() {
 function renderPreview(questions) {
   const area = document.getElementById('preview-area');
   if (!questions.length) { area.innerHTML = '<p class="text-gray-400 text-center py-8">沒有生成任何題目</p>'; return; }
-  const typeMap = {choice:'選擇題', fill:'填空題', calculation:'計算題'};
+  const typeMap = {choice:'選擇題', fill:'填空題'};
   area.innerHTML = questions.map((q, i) => `
     <div class="bg-white rounded-xl shadow p-5 mb-4 border-l-4 border-indigo-400">
       <div class="flex items-start gap-3">

@@ -101,6 +101,45 @@ if (!cols.includes('grade_level')) {
   db.exec(`ALTER TABLE questions ADD COLUMN grade_level TEXT NOT NULL DEFAULT 'junior_high'`);
 }
 
+// Migration: add dont_know_count column to questions if not exists
+{
+  const dkCols = db.prepare("PRAGMA table_info(questions)").all().map(c => c.name);
+  if (!dkCols.includes('dont_know_count')) {
+    db.exec(`ALTER TABLE questions ADD COLUMN dont_know_count INTEGER DEFAULT 0`);
+  }
+}
+
+// Migration: add GEPT-specific columns to questions if not exists
+{
+  const gCols = db.prepare("PRAGMA table_info(questions)").all().map(c => c.name);
+  if (!gCols.includes('image_url')) {
+    db.exec(`ALTER TABLE questions ADD COLUMN image_url TEXT`);
+  }
+  if (!gCols.includes('passage_id')) {
+    db.exec(`ALTER TABLE questions ADD COLUMN passage_id INTEGER`);
+  }
+  if (!gCols.includes('passage_content')) {
+    db.exec(`ALTER TABLE questions ADD COLUMN passage_content TEXT`);
+  }
+}
+
+// Migration: add GEPT-specific columns to answer_details if not exists
+{
+  const adCols = db.prepare("PRAGMA table_info(answer_details)").all().map(c => c.name);
+  if (!adCols.includes('grading_status')) {
+    db.exec(`ALTER TABLE answer_details ADD COLUMN grading_status TEXT DEFAULT 'auto'`);
+  }
+  if (!adCols.includes('rubric_score')) {
+    db.exec(`ALTER TABLE answer_details ADD COLUMN rubric_score REAL`);
+  }
+  if (!adCols.includes('reviewer_notes')) {
+    db.exec(`ALTER TABLE answer_details ADD COLUMN reviewer_notes TEXT`);
+  }
+  if (!adCols.includes('audio_answer_url')) {
+    db.exec(`ALTER TABLE answer_details ADD COLUMN audio_answer_url TEXT`);
+  }
+}
+
 // Migration: add grade_level column to subjects if not exists
 const subjectCols = db.prepare("PRAGMA table_info(subjects)").all().map(c => c.name);
 if (!subjectCols.includes('grade_level')) {
@@ -118,10 +157,12 @@ if (!subjectCols.includes('grade_level')) {
   }
 }
 
-// Migration: update questions type CHECK constraint to include 'listening'
+// Migration: update questions type CHECK constraint to include 'listening', GEPT types
 {
   const schemaRow = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='questions'`).get();
-  if (schemaRow && !schemaRow.sql.includes("'listening'")) {
+  const needsGeptTypes = schemaRow && !schemaRow.sql.includes("'cloze'");
+  const needsListening = schemaRow && !schemaRow.sql.includes("'listening'");
+  if (needsListening || needsGeptTypes) {
     db.exec(`PRAGMA foreign_keys = OFF`);
     // legacy_alter_table prevents SQLite from auto-rewriting FK references in other
     // tables when we rename questions → questions_old, avoiding dangling references.
@@ -132,7 +173,7 @@ if (!subjectCols.includes('grade_level')) {
         CREATE TABLE questions (
           id               INTEGER PRIMARY KEY AUTOINCREMENT,
           subject_id       INTEGER NOT NULL REFERENCES subjects(id),
-          type             TEXT NOT NULL CHECK(type IN ('choice','fill','calculation','listening')),
+          type             TEXT NOT NULL CHECK(type IN ('choice','fill','calculation','listening','cloze','reading','writing','speaking')),
           difficulty       INTEGER NOT NULL CHECK(difficulty BETWEEN 1 AND 5),
           content          TEXT NOT NULL,
           option_a         TEXT,
@@ -150,17 +191,23 @@ if (!subjectCols.includes('grade_level')) {
           is_archived      INTEGER DEFAULT 0,
           audio_url        TEXT,
           audio_transcript TEXT,
-          grade_level      TEXT NOT NULL DEFAULT 'junior_high'
+          grade_level      TEXT NOT NULL DEFAULT 'junior_high',
+          dont_know_count  INTEGER DEFAULT 0,
+          image_url        TEXT,
+          passage_id       INTEGER,
+          passage_content  TEXT
         )
       `);
       db.exec(`INSERT INTO questions
         (id, subject_id, type, difficulty, content, option_a, option_b, option_c, option_d,
          answer, explanation, source, tags, created_at, updated_at,
-         correct_count, wrong_count, is_archived, audio_url, audio_transcript, grade_level)
+         correct_count, wrong_count, is_archived, audio_url, audio_transcript, grade_level,
+         dont_know_count, image_url, passage_id, passage_content)
         SELECT id, subject_id, type, difficulty, content, option_a, option_b, option_c, option_d,
          answer, explanation, source, tags, created_at, updated_at,
          COALESCE(correct_count, 0), COALESCE(wrong_count, 0), COALESCE(is_archived, 0),
-         audio_url, audio_transcript, COALESCE(grade_level, 'junior_high')
+         audio_url, audio_transcript, COALESCE(grade_level, 'junior_high'),
+         COALESCE(dont_know_count, 0), image_url, passage_id, passage_content
         FROM questions_old`);
       db.exec(`DROP TABLE questions_old`);
     });
@@ -220,36 +267,47 @@ const insertSubject = db.prepare(`INSERT OR IGNORE INTO subjects (name, code, gr
   ['化學',     'CHEM',  'junior_high'],
   ['生物',     'BIO',   'junior_high'],
   ['地球科學', 'EARTH', 'junior_high'],
+  // 注意：升國中資優班聚焦數理，不設英文聽力科目
   // 國小六年級科目
   ['國語',     'CHN',   'elementary_6'],
   ['英語',     'ENG',   'elementary_6'],
   ['社會',     'SOC',   'elementary_6'],
   ['自然',     'NAT',   'elementary_6'],
   ['數學',     'MATH_E','elementary_6'],
+  ['英文聽力', 'ENG_LISTEN_6', 'elementary_6'],
   // 國一（七年級）科目
   ['國文', 'CHN_7',  'grade_7'],
   ['數學', 'MATH_7', 'grade_7'],
   ['英語', 'ENG_7',  'grade_7'],
   ['自然', 'SCI_7',  'grade_7'],
   ['社會', 'SOC_7',  'grade_7'],
+  ['英文聽力', 'ENG_LISTEN_7', 'grade_7'],
   // 國二（八年級）科目
   ['國文', 'CHN_8',  'grade_8'],
   ['數學', 'MATH_8', 'grade_8'],
   ['英語', 'ENG_8',  'grade_8'],
   ['自然', 'SCI_8',  'grade_8'],
   ['社會', 'SOC_8',  'grade_8'],
+  ['英文聽力', 'ENG_LISTEN_8', 'grade_8'],
   // 國三（九年級）科目
   ['國文', 'CHN_9',  'grade_9'],
   ['數學', 'MATH_9', 'grade_9'],
   ['英語', 'ENG_9',  'grade_9'],
   ['自然', 'SCI_9',  'grade_9'],
   ['社會', 'SOC_9',  'grade_9'],
+  ['英文聽力', 'ENG_LISTEN_9', 'grade_9'],
   // 國中教育會考科目
   ['國文', 'CHN_BC', 'bctest'],
   ['數學', 'MATH_BC','bctest'],
   ['英語', 'ENG_BC', 'bctest'],
   ['自然', 'SCI_BC', 'bctest'],
   ['社會', 'SOC_BC', 'bctest'],
+  ['英文聽力', 'ENG_LISTEN_BC', 'bctest'],
+  // 全民英檢初級（GEPT Elementary）科目
+  ['聽力', 'GEPT_LISTEN', 'gept_elementary'],
+  ['閱讀', 'GEPT_READ',   'gept_elementary'],
+  ['寫作', 'GEPT_WRITE',  'gept_elementary'],
+  ['口說', 'GEPT_SPEAK',  'gept_elementary'],
 ].forEach(([name, code, grade_level]) => insertSubject.run(name, code, grade_level));
 
 module.exports = db;
