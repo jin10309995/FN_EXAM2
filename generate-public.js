@@ -169,6 +169,7 @@ let timerInterval = null;
 let timeLeft = 0;
 let studentName = '';
 let studentId = '';
+let currentQuestionIndex = 0;
 
 async function loadExam() {
   const res = await fetch(\`/api/exams/\${examId}/take\`);
@@ -183,57 +184,113 @@ function startExam() {
   if (!studentName) { alert('請填寫姓名'); return; }
   studentId = document.getElementById('student-id').value.trim();
   document.getElementById('reg-modal').remove();
-  renderQuestions();
+  goToQuestion(0);
   startTimer();
 }
 
 const audioPlayCounts = {};
 const AUDIO_MAX_PLAYS = 3;
 
-function renderQuestions() {
+function renderCurrentQuestion(idx) {
   const container = document.getElementById('questions-container');
-  const nav = document.getElementById('question-nav');
+  const q = examData.questions[idx];
+  const typeLabel = {
+    choice: '選擇題', fill: '填空題', listening: '🎧 聽力',
+    cloze: '📝 段落填空', reading: '📖 閱讀理解', writing: '✍️ 寫作', speaking: '🎤 口說'
+  }[q.type] || q.type;
+  const typeTag = typeLabel ? \` · \${typeLabel}\` : '';
 
-  // Group questions by passage_id for reading comprehension
-  const passageShown = {};
-
-  container.innerHTML = examData.questions.map((q, i) => {
-    const typeLabel = {
-      choice: '', fill: '', listening: '🎧 聽力',
-      cloze: '📝 段落填空', reading: '📖 閱讀理解', writing: '✍️ 寫作', speaking: '🎤 口說'
-    }[q.type] || q.type;
-    const typeTag = typeLabel ? \` · \${typeLabel}\` : '';
-
-    // Passage block (reading comprehension)
-    let passageBlock = '';
-    if (q.type === 'reading' && q.passage_id && q.passage_content && !passageShown[q.passage_id]) {
-      passageShown[q.passage_id] = true;
-      passageBlock = \`<div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
-        <p class="text-xs text-yellow-700 font-medium mb-2">📖 閱讀文章（第 \${i+1} 題起適用）</p>
+  const passageBlock = (q.type === 'reading' && q.passage_content)
+    ? \`<div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+        <p class="text-xs text-yellow-700 font-medium mb-2">📖 閱讀文章</p>
         <div class="text-gray-800 text-sm leading-relaxed whitespace-pre-wrap">\${escHtml(q.passage_content)}</div>
-      </div>\`;
-    }
+      </div>\`
+    : '';
 
-    // Image block
-    const imageBlock = q.image_url
-      ? \`<div class="mb-3"><img src="\${q.image_url}" alt="題目圖片" class="max-h-56 rounded-lg border"></div>\`
-      : '';
+  const imageBlock = q.image_url
+    ? \`<div class="mb-3"><img src="\${q.image_url}" alt="題目圖片" class="max-h-56 rounded-lg border"></div>\`
+    : '';
 
-    return \`\${passageBlock}<div id="q-\${i}" class="bg-white rounded-xl shadow p-6 mb-4">
-      <div class="flex justify-between items-start mb-3">
-        <span class="text-sm font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">第 \${i+1} 題 · \${q.subject_name} · \${q.score}分\${typeTag}</span>
-        <span class="text-xs text-gray-400">\${'★'.repeat(q.difficulty || 1)}\${'☆'.repeat(5-(q.difficulty||1))}</span>
-      </div>
-      \${q.audio_transcript ? renderTTSPlayer(q, i) : ''}
-      \${imageBlock}
-      <p class="text-gray-800 mb-4 leading-relaxed">\${escHtml(q.content)}</p>
-      \${renderAnswer(q, i)}
-    </div>\`;
-  }).join('') + '<div class="h-24"></div>';
+  container.innerHTML = \`\${passageBlock}<div id="q-\${idx}" class="bg-white rounded-xl shadow p-6">
+    <div class="flex justify-between items-start mb-3">
+      <span class="text-sm font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">第 \${idx+1} 題 · \${q.subject_name} · \${q.score}分\${typeTag}</span>
+      <span class="text-xs text-gray-400">\${'★'.repeat(q.difficulty || 1)}\${'☆'.repeat(5-(q.difficulty||1))}</span>
+    </div>
+    \${q.audio_transcript ? renderTTSPlayer(q, idx) : ''}
+    \${imageBlock}
+    <p class="text-gray-800 mb-4 leading-relaxed">\${escHtml(q.content)}</p>
+    \${renderAnswer(q, idx)}
+  </div><div class="h-24"></div>\`;
+
+  restoreAnswer(q, idx);
   if (window.MathJax) MathJax.typesetPromise([container]);
-  nav.innerHTML = examData.questions.map((q,i) => \`
-    <button id="nav-\${i}" onclick="scrollToQ(\${i})" class="w-8 h-8 rounded text-sm font-medium border-2 border-gray-300 text-gray-600 hover:border-indigo-400">\${i+1}</button>
-  \`).join('');
+  updateNavBar();
+}
+
+function restoreAnswer(q, idx) {
+  const val = answers[q.id];
+  if (val === '__dont_know__') {
+    const dkBtn = document.getElementById(\`dontknow-\${idx}\`);
+    if (dkBtn) {
+      dkBtn.classList.remove('border-orange-300','text-orange-600','bg-orange-50');
+      dkBtn.classList.add('bg-orange-400','text-white','border-orange-500');
+    }
+    return;
+  }
+  if (!val) return;
+  if (q.type === 'choice' || q.type === 'reading') {
+    const radio = document.querySelector(\`input[name="q-\${idx}"][value="\${val}"]\`);
+    if (radio) radio.checked = true;
+  } else if (q.type === 'cloze') {
+    val.split('|').forEach((p, b) => {
+      const el = document.getElementById(\`cloze-\${idx}-\${b}\`);
+      if (el) el.value = p;
+    });
+  } else {
+    const el = document.getElementById(\`fill-\${idx}\`);
+    if (el) el.value = val;
+  }
+}
+
+function updateNavBar() {
+  const total = examData.questions.length;
+  const nav = document.getElementById('question-nav');
+  const isFirst = currentQuestionIndex === 0;
+  const isLast  = currentQuestionIndex === total - 1;
+
+  const navBtns = examData.questions.map((q, i) => {
+    const qid = q.id;
+    let cls = 'w-8 h-8 rounded text-xs font-medium border-2 ';
+    if (i === currentQuestionIndex) {
+      cls += 'border-indigo-600 bg-indigo-600 text-white';
+    } else if (answers[qid] === '__dont_know__') {
+      cls += 'border-orange-400 bg-orange-50 text-orange-700';
+    } else if (answers[qid]) {
+      cls += 'border-green-400 bg-green-50 text-green-700';
+    } else {
+      cls += 'border-gray-300 text-gray-600 hover:border-indigo-400';
+    }
+    return \`<button id="nav-\${i}" onclick="goToQuestion(\${i})" class="\${cls}">\${i+1}</button>\`;
+  }).join('');
+
+  nav.innerHTML = \`
+    <button onclick="goToQuestion(\${currentQuestionIndex - 1})" \${isFirst ? 'disabled' : ''}
+      class="px-3 py-1 rounded-lg border-2 border-gray-300 text-gray-600 text-sm font-medium \${isFirst ? 'opacity-30 cursor-not-allowed' : 'hover:border-indigo-400'}">
+      ← 上一題
+    </button>
+    <div class="flex gap-1 flex-wrap justify-center">\${navBtns}</div>
+    \${isLast
+      ? \`<button onclick="confirmSubmit()" class="px-3 py-1 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium">繳卷 ✓</button>\`
+      : \`<button onclick="goToQuestion(\${currentQuestionIndex + 1})" class="px-3 py-1 rounded-lg border-2 border-indigo-500 text-indigo-600 text-sm font-medium hover:bg-indigo-50">下一題 →</button>\`
+    }
+  \`;
+}
+
+function goToQuestion(idx) {
+  if (idx < 0 || idx >= examData.questions.length) return;
+  currentQuestionIndex = idx;
+  renderCurrentQuestion(idx);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
   updateProgress();
 }
 
@@ -485,7 +542,7 @@ function stopRecording(idx) {
   document.getElementById(\`rec-stop-\${idx}\`).classList.add('opacity-50','cursor-not-allowed');
 }
 
-function scrollToQ(idx) { document.getElementById(\`q-\${idx}\`).scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+function scrollToQ(idx) { goToQuestion(idx); }
 
 function updateProgress() {
   const answered = Object.keys(answers).length;
@@ -660,7 +717,7 @@ body{font-family:'Noto Sans TC',sans-serif;}
       <select id="filter-type" onchange="loadQuestions()" class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
         <option value="">全部題型</option>
         <option value="choice">選擇題</option>
-        <option value="fill">填充題</option>
+        <option value="fill">填空題</option>
       </select>
       <select id="filter-diff"onchange="loadQuestions()" class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
         <option value="">全部難度</option>
@@ -818,7 +875,7 @@ body{font-family:'Noto Sans TC',sans-serif;}
             <label class="block text-sm font-medium text-gray-700 mb-1">題型 *</label>
             <select id="q-type" onchange="toggleOptions()" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" required>
               <option value="choice">選擇題</option>
-              <option value="fill">填充題</option>
+              <option value="fill">填空題</option>
               <option value="listening" class="listen-auto" hidden disabled>聽力題（自動）</option>
               <option value="cloze" class="gept-only">段落填空</option>
               <option value="reading" class="gept-only">閱讀理解</option>
@@ -902,7 +959,7 @@ body{font-family:'Noto Sans TC',sans-serif;}
         <div class="grid grid-cols-2 gap-3">
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">正確答案 *</label>
-            <input id="q-answer" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" placeholder="選擇題填 A/B/C/D，填充題填答案" required>
+            <input id="q-answer" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" placeholder="選擇題填 A/B/C/D，填空題填答案" required>
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">標籤</label>
@@ -1004,7 +1061,7 @@ body{font-family:'Noto Sans TC',sans-serif;}
             <select id="rand-type" class="border border-gray-300 rounded px-2 py-1 text-sm">
               <option value="">全部</option>
               <option value="choice">選擇題</option>
-              <option value="fill">填充題</option>
+              <option value="fill">填空題</option>
             </select>
           </div>
           <div>
@@ -1025,7 +1082,7 @@ body{font-family:'Noto Sans TC',sans-serif;}
           </div>
           <div>
             <label class="block text-xs text-gray-500 mb-1">抽題數量</label>
-            <input id="rand-count" type="number" value="10" min="1" max="100" class="border border-gray-300 rounded px-2 py-1 text-sm w-16">
+            <input id="rand-count" type="number" value="20" min="1" max="100" class="border border-gray-300 rounded px-2 py-1 text-sm w-16">
           </div>
           <button onclick="randomPickQuestions()" class="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-sm rounded-lg font-medium transition-colors">隨機抽題</button>
           <label class="flex items-center gap-1 text-xs text-gray-600 cursor-pointer">
@@ -1036,7 +1093,10 @@ body{font-family:'Noto Sans TC',sans-serif;}
         <p id="rand-msg" class="text-xs text-gray-500 mt-2 hidden"></p>
       </div>
       <div class="border rounded-xl p-4 mb-4">
-        <h4 class="font-medium text-gray-700 mb-3">已選題目 <span id="selected-count" class="text-indigo-600">0</span> 題</h4>
+        <div class="flex items-center justify-between mb-3">
+          <h4 class="font-medium text-gray-700">已選題目 <span id="selected-count" class="text-indigo-600">0</span> 題</h4>
+          <button onclick="sortSelectedByType()" class="px-3 py-1 rounded-lg bg-amber-50 border border-amber-300 text-amber-700 hover:bg-amber-100 text-xs font-medium">⇅ 自動排序（選擇→填空→其他）</button>
+        </div>
         <div id="selected-questions" class="space-y-1 text-sm max-h-48 overflow-y-auto"></div>
       </div>
       <div class="flex gap-3 justify-end">
@@ -1052,6 +1112,7 @@ let currentPage = 1;
 let editingQuestionId = null;
 let editingExamId = null;
 let selectedQuestions = {};
+let selectedQuestionsOrder = [];
 let allExamQPool = [];
 
 // ── Init ──────────────────────────────────────────────────────────────────
@@ -1354,7 +1415,7 @@ async function loadQuestions(page = 1) {
 
   const res = await fetch('/api/questions?' + params);
   const data = await res.json();
-  const typeLabel = {choice:'選擇題',fill:'填充題',listening:'聽力題',cloze:'段落填空',reading:'閱讀理解',writing:'寫作',speaking:'口說'};
+  const typeLabel = {choice:'選擇題',fill:'填空題',listening:'聽力題',cloze:'段落填空',reading:'閱讀理解',writing:'寫作',speaking:'口說'};
   const gradeLabel = {junior_high:'升國中',elementary_6:'國小六年級',grade_7:'國一',grade_8:'國二',grade_9:'國三',bctest:'會考'};
   const gradeCls = {elementary_6:'bg-green-50 text-green-700',junior_high:'bg-blue-50 text-blue-700',grade_7:'bg-purple-50 text-purple-700',grade_8:'bg-orange-50 text-orange-700',grade_9:'bg-red-50 text-red-700',bctest:'bg-yellow-50 text-yellow-700'};
   const tbody = data.data.map(q => \`
@@ -1541,6 +1602,7 @@ async function loadExams() {
 async function openExamModal(data = null) {
   editingExamId = data ? data.id : null;
   selectedQuestions = {};
+  selectedQuestionsOrder = [];
   document.getElementById('exam-modal-title').textContent = data ? '編輯試卷' : '新增試卷';
   document.getElementById('exam-title-input').value = data?.title || '';
   document.getElementById('exam-desc-input').value = data?.description || '';
@@ -1548,7 +1610,11 @@ async function openExamModal(data = null) {
   document.getElementById('exam-status-input').value = data?.status || 'draft';
 
   if (data && data.questions) {
-    data.questions.forEach(q => { selectedQuestions[q.id] = { ...q, score: q.score }; });
+    const sorted = [...data.questions].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+    sorted.forEach(q => {
+      selectedQuestions[q.id] = { ...q, score: q.score };
+      selectedQuestionsOrder.push(q.id);
+    });
   }
   await loadExamQuestions();
   renderSelectedQuestions();
@@ -1589,8 +1655,13 @@ async function loadExamQuestions() {
 
 function toggleQuestion(id) {
   const q = allExamQPool.find(q => q.id === id);
-  if (selectedQuestions[id]) delete selectedQuestions[id];
-  else if (q) selectedQuestions[id] = { ...q, score: 5 };
+  if (selectedQuestions[id]) {
+    delete selectedQuestions[id];
+    selectedQuestionsOrder = selectedQuestionsOrder.filter(oid => oid !== id);
+  } else if (q) {
+    selectedQuestions[id] = { ...q, score: 5 };
+    selectedQuestionsOrder.push(id);
+  }
   renderSelectedQuestions();
 }
 
@@ -1601,7 +1672,7 @@ async function randomPickQuestions() {
   const t    = document.getElementById('rand-type').value;
   const dMin = document.getElementById('rand-diff-min').value;
   const dMax = document.getElementById('rand-diff-max').value;
-  const cnt  = parseInt(document.getElementById('rand-count').value) || 10;
+  const cnt  = parseInt(document.getElementById('rand-count').value) || 20;
   const weighted = document.getElementById('rand-weighted')?.checked;
   if (s)    params.set('subject_id', s);
   if (g)    params.set('grade_level', g);
@@ -1616,6 +1687,7 @@ async function randomPickQuestions() {
   questions.forEach(q => {
     if (!selectedQuestions[q.id]) {
       selectedQuestions[q.id] = { ...q, score: 5 };
+      selectedQuestionsOrder.push(q.id);
       if (!allExamQPool.find(p => p.id === q.id)) allExamQPool.push(q);
       added++;
     }
@@ -1627,8 +1699,18 @@ async function randomPickQuestions() {
   renderSelectedQuestions();
 }
 
+function sortSelectedByType() {
+  const typeOrder = { choice: 1, fill: 2 };
+  selectedQuestionsOrder.sort((a, b) => {
+    const ta = typeOrder[selectedQuestions[a]?.type] || 3;
+    const tb = typeOrder[selectedQuestions[b]?.type] || 3;
+    return ta - tb;
+  });
+  renderSelectedQuestions();
+}
+
 function renderSelectedQuestions() {
-  const list = Object.values(selectedQuestions);
+  const list = selectedQuestionsOrder.map(id => selectedQuestions[id]).filter(Boolean);
   document.getElementById('selected-count').textContent = list.length;
   document.getElementById('selected-questions').innerHTML = list.length ? list.map(q => \`
     <div class="flex items-center gap-2 p-2 rounded bg-indigo-50">
@@ -1637,7 +1719,7 @@ function renderSelectedQuestions() {
       <input type="number" value="\${q.score}" min="1" max="50"
         onchange="selectedQuestions[\${q.id}].score = parseInt(this.value)||5"
         class="w-14 border border-gray-300 rounded px-1 py-0.5 text-xs text-center">
-      <button onclick="delete selectedQuestions[\${q.id}]; document.getElementById('eq-\${q.id}') && (document.getElementById('eq-\${q.id}').checked=false); renderSelectedQuestions()"
+      <button onclick="delete selectedQuestions[\${q.id}]; selectedQuestionsOrder = selectedQuestionsOrder.filter(id => id !== \${q.id}); document.getElementById('eq-\${q.id}') && (document.getElementById('eq-\${q.id}').checked=false); renderSelectedQuestions()"
         class="text-red-400 hover:text-red-600 text-xs">✕</button>
     </div>
   \`).join('') : '<p class="text-gray-400 text-center py-4 text-xs">請從上方勾選題目</p>';
@@ -1651,7 +1733,7 @@ async function saveExam() {
     description: document.getElementById('exam-desc-input').value.trim(),
     duration_min: parseInt(document.getElementById('exam-duration-input').value) || 60,
     status: document.getElementById('exam-status-input').value,
-    question_ids: Object.values(selectedQuestions).map(q => ({ id: q.id, score: q.score }))
+    question_ids: selectedQuestionsOrder.map(id => ({ id, score: selectedQuestions[id]?.score || 5 }))
   };
   const url    = editingExamId ? '/api/exams/' + editingExamId : '/api/exams';
   const method = editingExamId ? 'PUT' : 'POST';
@@ -1893,7 +1975,7 @@ const aiGenerateHtml = `<!DOCTYPE html>
       <div>
         <label class="block text-sm font-medium text-gray-600 mb-1">題型</label>
         <select id="type" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
-          <option value="choice">單選題</option>
+          <option value="choice">選擇題</option>
           <option value="fill">填空題</option>
         </select>
       </div>
