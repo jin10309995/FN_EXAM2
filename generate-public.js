@@ -157,7 +157,7 @@ const examHtml = `<!DOCTYPE html>
 </main>
 
 <div class="fixed bottom-0 left-0 right-0 bg-white border-t shadow-lg p-3 z-30">
-  <div class="max-w-4xl mx-auto flex gap-2 flex-wrap justify-center" id="question-nav"></div>
+  <div class="max-w-4xl mx-auto flex flex-col items-center gap-2" id="question-nav"></div>
 </div>
 
 <script>
@@ -274,15 +274,17 @@ function updateNavBar() {
   }).join('');
 
   nav.innerHTML = \`
-    <button onclick="goToQuestion(\${currentQuestionIndex - 1})" \${isFirst ? 'disabled' : ''}
-      class="px-3 py-1 rounded-lg border-2 border-gray-300 text-gray-600 text-sm font-medium \${isFirst ? 'opacity-30 cursor-not-allowed' : 'hover:border-indigo-400'}">
-      ← 上一題
-    </button>
     <div class="flex gap-1 flex-wrap justify-center">\${navBtns}</div>
-    \${isLast
-      ? \`<button onclick="confirmSubmit()" class="px-3 py-1 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium">繳卷 ✓</button>\`
-      : \`<button onclick="goToQuestion(\${currentQuestionIndex + 1})" class="px-3 py-1 rounded-lg border-2 border-indigo-500 text-indigo-600 text-sm font-medium hover:bg-indigo-50">下一題 →</button>\`
-    }
+    <div class="flex items-center justify-between w-full max-w-sm gap-4">
+      <button onclick="goToQuestion(\${currentQuestionIndex - 1})" \${isFirst ? 'disabled' : ''}
+        class="flex-1 px-5 py-2 rounded-lg border-2 border-gray-300 text-gray-700 text-base font-semibold \${isFirst ? 'opacity-30 cursor-not-allowed' : 'hover:border-indigo-400 hover:text-indigo-600'}">
+        ← 上一題
+      </button>
+      \${isLast
+        ? \`<button onclick="confirmSubmit()" class="flex-1 px-5 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-base font-semibold">繳卷 ✓</button>\`
+        : \`<button onclick="goToQuestion(\${currentQuestionIndex + 1})" class="flex-1 px-5 py-2 rounded-lg border-2 border-indigo-500 text-indigo-600 text-base font-semibold hover:bg-indigo-50">下一題 →</button>\`
+      }
+    </div>
   \`;
 }
 
