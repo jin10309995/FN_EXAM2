@@ -1,163 +1,123 @@
-# 🎓 升國中數理資優班考題系統
+# 升學與英語考題系統
 
-數理資優班甄試線上考試平台 — 支援題庫管理、線上作答、自動評分與成績統計。
-
-## 系統需求
-
-- [Node.js](https://nodejs.org/) 16 以上版本
-- Windows 作業系統（`setup.bat` / `start.bat` 適用）
-
-## 快速開始
-
-```bat
-:: 1. 首次安裝（只需執行一次）
-setup.bat
-
-:: 2. 啟動伺服器
-start.bat
-
-:: 3. 開啟瀏覽器
-::    http://localhost:3000
-```
-
-`setup.bat` 會自動完成：安裝 npm 套件 → 產生前端頁面 → 初始化資料庫 → 植入範例題目。
-
-## 專案結構
-
-```
-project/
-├── server.js           # Express 後端主程式（API + 靜態檔案服務）
-├── database.js         # SQLite 資料庫初始化與連線
-├── seed.js             # 範例題目植入腳本
-├── generate-public.js  # 自動產生前端 HTML 頁面
-├── exam.db             # SQLite 資料庫檔案
-├── public/             # 前端靜態頁面
-│   ├── index.html      # 首頁入口
-│   ├── exam-list.html  # 考試列表（學生端）
-│   ├── exam.html       # 線上作答（學生端）
-│   ├── result.html     # 個人成績與解析
-│   ├── results.html    # 全班成績查詢
-│   └── admin.html      # 後台管理（教師端）
-├── setup.bat           # 一鍵初始化腳本
-└── start.bat           # 啟動伺服器腳本
-```
-
-## 頁面說明
-
-| 頁面 | 角色 | 說明 |
-|------|------|------|
-| `/` | 所有人 | 首頁入口，導覽至各功能 |
-| `/exam-list.html` | 學生 | 選擇已開放的考試 |
-| `/exam.html?id=<ID>` | 學生 | 線上作答（倒數計時、自動評分） |
-| `/result.html?id=<ID>` | 學生 | 查看個人成績與詳細題目解析 |
-| `/results.html` | 教師 | 查詢全班成績排行 |
-| `/admin.html` | 教師 | 題庫管理 / 試卷管理 / 成績統計 |
-
-## 題目類型
-
-| 類型 | 代碼 | 評分方式 |
-|------|------|----------|
-| 選擇題 | `choice` | 自動評分（單選 A/B/C/D） |
-| 填充題 | `fill` | 自動評分（文字比對） |
-| 計算題 | `calculation` | 預留（人工批改） |
-
-## 科目分類
-
-| 科目 | 代碼 |
-|------|------|
-| 數學 | MATH |
-| 自然科學 | SCI |
-| 物理 | PHY |
-| 化學 | CHEM |
-| 生物 | BIO |
-| 地球科學 | EARTH |
-
-## 難度等級
-
-| 等級 | 說明 |
-|------|------|
-| 1 ★ | 入門 |
-| 2 ★★ | 基礎 |
-| 3 ★★★ | 中級 |
-| 4 ★★★★ | 進階 |
-| 5 ★★★★★ | 競賽級 |
-
-## API 一覽
-
-### 科目
-```
-GET  /api/subjects                  取得所有科目列表
-```
-
-### 題庫
-```
-GET  /api/questions                 查詢題庫（支援篩選與分頁）
-     ?subject_id=1&type=choice&difficulty=3&search=關鍵字&page=1&limit=20
-GET  /api/questions/random          隨機抽題
-     ?subject_id=1&type=choice&difficulty_min=2&difficulty_max=4&count=10
-GET  /api/questions/:id             取得單筆題目
-POST /api/questions                 新增題目
-PUT  /api/questions/:id             編輯題目
-DELETE /api/questions/:id           刪除題目
-```
-
-### 試卷
-```
-GET  /api/exams                     取得所有試卷列表（含題數與總分）
-GET  /api/exams/:id                 取得試卷詳情（含答案，供管理使用）
-GET  /api/exams/:id/take            考生作答用（隱藏答案，僅開放中試卷）
-POST /api/exams                     建立試卷
-PUT  /api/exams/:id                 更新試卷（含狀態切換：draft/active/closed）
-DELETE /api/exams/:id               刪除試卷
-```
-
-### 作答與成績
-```
-POST /api/exams/:id/submit          提交作答，回傳得分與百分比
-GET  /api/exams/:id/submissions     取得此試卷所有考生成績列表
-GET  /api/exams/:id/stats           試卷統計（平均分、最高分、最易錯題 Top 5）
-GET  /api/submissions/:id           取得單筆作答詳情（含每題解析）
-```
-
-## 資料庫結構
-
-SQLite 資料庫（`exam.db`）包含以下資料表：
-
-| 資料表 | 說明 |
-|--------|------|
-| `subjects` | 科目（數學、物理…） |
-| `questions` | 題目（內容、選項、答案、解析、標籤） |
-| `exams` | 試卷（標題、說明、時長、狀態） |
-| `exam_questions` | 試卷題目關聯（排序、配分） |
-| `submissions` | 學生作答紀錄 |
-| `answer_details` | 每題作答明細（對錯、得分） |
-
-可用 [DB Browser for SQLite](https://sqlitebrowser.org/) 直接開啟 `exam.db` 查看資料。
-
-## 手動執行
-
-```bat
-:: 安裝套件
-npm install
-
-:: 重新產生前端頁面
-node generate-public.js
-
-:: 植入範例題目（數學 + 自然科學共 19 題，並建立一份範例試卷）
-node seed.js
-
-:: 啟動伺服器（預設 port 3000）
-node server.js
-
-:: 自訂 port
-set PORT=8080 && node server.js
-```
+這是一套以 Node.js + Express + SQLite 建立的單體式線上考試平台，支援題庫管理、試卷管理、學生作答、自動評分、人工批改、學習分析，以及 LLM 輔助出題。系統目前同時涵蓋升國中資優班、國中各年級、會考題型與 GEPT 初級英語題型。
 
 ## 技術棧
 
-| 類別 | 技術 |
-|------|------|
-| 後端框架 | [Express.js](https://expressjs.com/) 4.x |
-| 資料庫 | [SQLite](https://www.sqlite.org/) via [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) |
-| 前端樣式 | [Tailwind CSS](https://tailwindcss.com/)（CDN） |
-| 字型 | Noto Sans TC（Google Fonts） |
+- Backend: Express 4
+- Database: SQLite (`better-sqlite3`)
+- Frontend: 靜態 HTML + Tailwind CSS CDN
+- AI: OpenAI / Gemini / Claude
+- Uploads: `multer`
+
+## 專案結構
+
+```text
+FN_EXAM/
+├── server.js                # API、靜態檔案服務、評分與分析主程式
+├── database.js              # SQLite schema 與 migration
+├── llm.js                   # LLM provider 封裝
+├── generate-public.js       # 產生 public/*.html
+├── public/                  # 前端頁面
+│   ├── index.html
+│   ├── exam-list.html
+│   ├── exam.html
+│   ├── result.html
+│   ├── results.html
+│   ├── analysis.html
+│   ├── admin.html
+│   └── ai-generate.html
+├── uploads/                 # 音訊與圖片上傳
+├── seed*.js                 # 題庫與範例資料植入腳本
+├── exam.db                  # SQLite 資料庫
+├── setup.bat
+└── start.bat
+```
+
+## 主要功能
+
+- 題庫管理：新增、編輯、刪除、篩選、批次匯入
+- 試卷管理：建立試卷、配分、切換 `draft / active / closed`
+- 線上作答：倒數計時、即時提交、自動評分
+- 題型支援：`choice`、`fill`、`calculation`、`listening`、`cloze`、`reading`、`writing`、`speaking`
+- 人工批改：針對寫作與口說題進行 review 與補分
+- 學習分析：作答分析、難度校準、題目品質、能力估計、推薦題目
+- AI 出題：管理端可呼叫 LLM 生成題目預覽後再存入資料庫
+- 媒體上傳：支援聽力音訊與題目圖片
+
+## 快速開始
+
+### Windows
+
+```bat
+setup.bat
+start.bat
+```
+
+### 手動執行
+
+```bat
+npm install
+node generate-public.js
+node seed.js
+node server.js
+```
+
+預設網址：`http://localhost:3000`
+
+## 環境變數
+
+請參考 `.env.example`，常用設定如下：
+
+```env
+PORT=3000
+ADMIN_API_KEY=your_admin_key
+ALLOWED_ORIGIN=http://localhost:3000
+LLM_PROVIDER=openai
+OPENAI_API_KEY=
+GEMINI_API_KEY=
+ANTHROPIC_API_KEY=
+```
+
+## 主要頁面
+
+- `/`：首頁
+- `/exam-list.html`：考試列表
+- `/exam.html?id=<examId>`：作答頁
+- `/result.html?id=<submissionId>`：個人成績
+- `/analysis.html?id=<submissionId>`：作答分析
+- `/results.html`：考試成績查詢
+- `/admin.html`：題庫、試卷、分析與批改管理
+- `/ai-generate.html`：AI 出題頁
+
+## API 概覽
+
+- Subjects: `GET /api/subjects`
+- Questions: `GET/POST/PUT/DELETE /api/questions`
+- Batch & random: `POST /api/questions/batch`, `GET /api/questions/random`
+- Exams: `GET/POST/PUT/DELETE /api/exams`, `GET /api/exams/:id/take`
+- Submission: `POST /api/exams/:id/submit`, `GET /api/submissions/:id`
+- Analysis: `GET /api/submissions/:id/analysis`, `GET /api/exams/:id/stats`
+- Manual grading: `GET /api/exams/:id/pending-grading`, `PUT /api/answer-details/:id/grade`
+- Analytics: difficulty calibration, question quality, student ability
+- AI & media: `POST /api/generate/questions`, `POST /api/audio/upload`, `POST /api/image/upload`
+
+## 資料庫摘要
+
+核心資料表包含：
+
+- `subjects`
+- `questions`
+- `exams`
+- `exam_questions`
+- `submissions`
+- `answer_details`
+
+其中 `questions` 已包含 `grade_level`、音訊、圖片、文章內容、作答統計等欄位；`answer_details` 亦支援人工批改狀態與 reviewer notes。
+
+## 注意事項
+
+- 本專案目前為單體架構，適合單機或小型部署。
+- 資料庫為本機 SQLite，進行 schema 或 seed 調整前請先備份 `exam.db`。
+- 管理 API 以 `x-api-key` 保護，部署時請務必設定 `ADMIN_API_KEY`。
+- 若要使用 AI 出題，需先配置對應 provider API key。
