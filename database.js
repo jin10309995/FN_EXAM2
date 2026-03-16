@@ -259,9 +259,18 @@ if (!subjectCols.includes('grade_level')) {
 }
 
 
+// Migration: add UNIQUE INDEX on questions(content) to prevent duplicate questions
+{
+  const idxExists = db.prepare(
+    `SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_questions_content_unique'`
+  ).get();
+  if (!idxExists) {
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_questions_content_unique ON questions(content)`);
+  }
+}
+
 const insertSubject = db.prepare(`INSERT OR IGNORE INTO subjects (name, code, grade_level) VALUES (?, ?, ?)`);
 [
-  // 升國中科目
   ['數學',     'MATH',  'junior_high'],
   ['自然科學', 'SCI',   'junior_high'],
   ['物理',     'PHY',   'junior_high'],

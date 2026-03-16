@@ -1155,6 +1155,16 @@ function uniqueQuestionIds(ids) {
   });
 }
 
+// 正規化題目內容（去除 LaTeX、符號、空白，轉小寫）供內容比對去重
+function normalizeQContent(s) {
+  return String(s || '')
+    .replace(/\$+/g, '')
+    .replace(/\\[a-zA-Z]+/g, '')
+    .replace(/[^\u4e00-\u9fffa-z0-9]+/gi, '')
+    .toLowerCase()
+    .trim();
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────
 async function init() {
   // 初始化時，依預設學段（junior_high）分別載入各科目下拉
@@ -1771,7 +1781,11 @@ async function loadExamQuestions() {
   params.set('limit', 100);
   const res = await fetch('/api/questions?' + params);
   const data = await res.json();
-  allExamQPool = data.data;
+  // 合併更新 pool，保留隨機抽到但不在目前篩選條件內的題目資料
+  const poolMap = {};
+  allExamQPool.forEach(q => { poolMap[q.id] = q; });
+  (data.data || []).forEach(q => { poolMap[q.id] = q; });
+  allExamQPool = Object.values(poolMap);
   document.getElementById('eq-list').innerHTML = data.data.map(q => \`
     <div class="flex items-center gap-2 p-2 rounded hover:bg-gray-50 \${selectedQuestions[q.id] ? 'bg-indigo-50' : ''}">
       <input type="checkbox" id="eq-\${q.id}" \${selectedQuestions[q.id] ? 'checked' : ''} onchange="toggleQuestion(\${q.id})" class="accent-indigo-600">
@@ -1813,10 +1827,16 @@ async function randomPickQuestions() {
   const res = await fetch('/api/questions/random?' + params);
   const questions = await res.json();
   let added = 0;
+  // 建立已選題目的正規化內容集合，防止「相同內容、不同 ID」的重覆題被加入
+  const selectedContents = new Set(
+    Object.values(selectedQuestions).map(q => normalizeQContent(q.content))
+  );
   questions.forEach(q => {
-    if (!selectedQuestions[q.id]) {
+    const nc = normalizeQContent(q.content);
+    if (!selectedQuestions[q.id] && !selectedContents.has(nc)) {
       selectedQuestions[q.id] = { ...q, score: 5 };
       selectedQuestionsOrder.push(q.id);
+      selectedContents.add(nc);
       if (!allExamQPool.find(p => p.id === q.id)) allExamQPool.push(q);
       added++;
     }
