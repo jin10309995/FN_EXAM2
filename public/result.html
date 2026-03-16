@@ -23,6 +23,7 @@
 const id = new URLSearchParams(location.search).get('id');
 function getOptionLabel(q, letter) {
   if (!letter) return '（未作答）';
+  if (q.type === 'true_false') return letter.toUpperCase() === 'T' ? '是' : '否';
   const map = { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d };
   const text = map[letter.toUpperCase()];
   return text ? letter.toUpperCase() + '. ' + escHtml(text) : letter.toUpperCase();
@@ -48,7 +49,7 @@ async function loadResult() {
         const statusText  = d.is_correct ? '✓ 答對 +'+d.score_earned+'分' : isDontKnow ? '🤷 我不會' : isPending ? '⏳ 待批改' : '✗ 答錯';
         const givenDisplay = isDontKnow ? '<span class="text-orange-600 font-medium">🤷 我不會</span>'
           : isPending ? `<span class="text-blue-600">${escHtml(d.given_answer) || '（未作答）'}</span>`
-          : `<span class="${d.is_correct ? 'text-green-600' : 'text-red-600'} font-medium">${d.type === 'choice' ? getOptionLabel(d, d.given_answer) : (escHtml(d.given_answer) || '（未作答）')}</span>`;
+          : `<span class="${d.is_correct ? 'text-green-600' : 'text-red-600'} font-medium">${['choice','true_false'].includes(d.type) ? getOptionLabel(d, d.given_answer) : (escHtml(d.given_answer) || '（未作答）')}</span>`;
         return `
         <div class="bg-white rounded-xl shadow p-5 border-l-4 ${borderColor}">
           <div class="flex justify-between mb-2">
@@ -58,8 +59,8 @@ async function loadResult() {
           <p class="text-gray-800 mb-3">${escHtml(d.content)}</p>
           <div class="text-sm space-y-1">
             <p>你的答案：${givenDisplay}</p>
-            ${(!d.is_correct && !isDontKnow && !isPending) ? `<p>正確答案：<span class="text-green-600 font-medium">${d.type === 'choice' ? getOptionLabel(d, d.correct_answer) : escHtml(d.correct_answer)}</span></p>` : ''}
-            ${isDontKnow ? `<p>正確答案：<span class="text-green-600 font-medium">${d.type === 'choice' ? getOptionLabel(d, d.correct_answer) : escHtml(d.correct_answer)}</span></p><p class="text-orange-500 text-xs mt-1">📌 此題已標記為需加強，出題時將優先複習</p>` : ''}
+            ${(!d.is_correct && !isDontKnow && !isPending) ? `<p>正確答案：<span class="text-green-600 font-medium">${['choice','true_false'].includes(d.type) ? getOptionLabel(d, d.correct_answer) : escHtml(d.correct_answer)}</span></p>` : ''}
+            ${isDontKnow ? `<p>正確答案：<span class="text-green-600 font-medium">${['choice','true_false'].includes(d.type) ? getOptionLabel(d, d.correct_answer) : escHtml(d.correct_answer)}</span></p><p class="text-orange-500 text-xs mt-1">📌 此題已標記為需加強，出題時將優先複習</p>` : ''}
             ${isPending ? '<p class="text-blue-500 text-xs mt-1">📋 此題為寫作/口說題，將由老師批改後更新分數</p>' : ''}
             ${d.explanation ? `<p class="text-gray-500 mt-2 bg-gray-50 p-2 rounded">💡 ${escHtml(d.explanation)}</p>` : ''}
           </div>

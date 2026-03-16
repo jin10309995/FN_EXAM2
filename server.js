@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
@@ -127,9 +127,57 @@ function requireAdmin(req, res, next) {
   }
   next();
 }
+
+function normalizeExamQuestionIds(questionIds) {
+  const seen = new Set();
+  const normalized = [];
+
+  for (const item of Array.isArray(questionIds) ? questionIds : []) {
+    const rawId = item && typeof item === 'object' ? item.id : item;
+    const rawScore = item && typeof item === 'object' ? item.score : null;
+    const id = parseInt(rawId, 10);
+    if (!Number.isInteger(id) || seen.has(id)) continue;
+    seen.add(id);
+    normalized.push({
+      id,
+      score: Math.max(1, parseInt(rawScore, 10) || 5)
+    });
+  }
+
+  return normalized;
+}
+
+function normalizeQuestionContent(content) {
+  return String(content || '')
+    .replace(/\$+/g, '')
+    .replace(/\\[a-zA-Z]+/g, '')
+    .replace(/[^\p{L}\p{N}]+/gu, '')
+    .toLowerCase()
+    .trim();
+}
+
+function dedupeQuestionsByContent(questions) {
+  const seenIds = new Set();
+  const seenContent = new Set();
+  const result = [];
+
+  for (const question of questions || []) {
+    if (!question) continue;
+    if (question.id != null && seenIds.has(question.id)) continue;
+    const normalizedContent = normalizeQuestionContent(question.content);
+    if (normalizedContent && seenContent.has(normalizedContent)) continue;
+
+    if (question.id != null) seenIds.add(question.id);
+    if (normalizedContent) seenContent.add(normalizedContent);
+    result.push(question);
+  }
+
+  return result;
+}
+
 // ─── Random Questions ────────────────────────────────────────────────────────
 app.get('/api/questions/random', (req, res) => {
-  const { subject_id, type, difficulty_min, difficulty_max, grade_level, count = 10, weighted } = req.query;
+  const { subject_id, type, difficulty_min, difficulty_max, grade_level, count = 10, weighted, exclude_ids = '' } = req.query;
   const where = ['q.is_archived = 0'];
   const params = [];
   if (subject_id)     { where.push('q.subject_id = ?');   params.push(subject_id); }
@@ -137,16 +185,25 @@ app.get('/api/questions/random', (req, res) => {
   if (difficulty_min) { where.push('q.difficulty >= ?');  params.push(difficulty_min); }
   if (difficulty_max) { where.push('q.difficulty <= ?');  params.push(difficulty_max); }
   if (grade_level)    { where.push('q.grade_level = ?');  params.push(grade_level); }
+  const excludeIds = String(exclude_ids)
+    .split(',')
+    .map((id) => parseInt(id, 10))
+    .filter((id) => Number.isInteger(id));
+  if (excludeIds.length) {
+    where.push(`q.id NOT IN (${excludeIds.map(() => '?').join(',')})`);
+    params.push(...excludeIds);
+  }
   const w = 'WHERE ' + where.join(' AND ');
   // 加權隨機：依 wrong_count + dont_know_count×2 指數分佈加權，不會的題目比答錯更優先
   const orderBy = weighted === '1'
     ? '-LOG(ABS(CAST(RANDOM() AS REAL) / 9223372036854775807)) / (q.wrong_count + q.dont_know_count * 2 + 1)'
     : 'RANDOM()';
-  const data = db.prepare(`
-    SELECT q.*, s.name as subject_name FROM questions q
+  const rows = db.prepare(`
+    SELECT DISTINCT q.*, s.name as subject_name FROM questions q
     JOIN subjects s ON s.id = q.subject_id
     ${w} ORDER BY ${orderBy} LIMIT ?
-  `).all(...params, parseInt(count));
+  `).all(...params, Math.max(parseInt(count) * 5, parseInt(count)));
+  const data = dedupeQuestionsByContent(rows).slice(0, parseInt(count));
   res.json(data);
 });
 
@@ -188,7 +245,7 @@ app.post('/api/questions', requireAdmin, (req, res) => {
   const { subject_id, type, difficulty, content, option_a, option_b, option_c, option_d, answer, explanation, source, tags, grade_level = 'junior_high', audio_url, audio_transcript } = req.body;
   if (!subject_id || !type || !difficulty || !content || !answer)
     return res.status(400).json({ error: '必填欄位不完整' });
-  if (!['choice', 'fill', 'calculation', 'listening', 'cloze', 'reading', 'writing', 'speaking'].includes(type))
+  if (!['choice', 'true_false', 'fill', 'calculation', 'listening', 'cloze', 'reading', 'writing', 'speaking'].includes(type))
     return res.status(400).json({ error: '題型值無效' });
   if (!['elementary_6', 'junior_high', 'grade_7', 'grade_8', 'grade_9', 'bctest', 'gept_elementary'].includes(grade_level))
     return res.status(400).json({ error: '學段值無效' });
@@ -201,7 +258,7 @@ app.post('/api/questions', requireAdmin, (req, res) => {
 
 app.put('/api/questions/:id', requireAdmin, (req, res) => {
   const { subject_id, type, difficulty, content, option_a, option_b, option_c, option_d, answer, explanation, source, tags, grade_level, audio_url, audio_transcript } = req.body;
-  if (type && !['choice', 'fill', 'calculation', 'listening', 'cloze', 'reading', 'writing', 'speaking'].includes(type))
+  if (type && !['choice', 'true_false', 'fill', 'calculation', 'listening', 'cloze', 'reading', 'writing', 'speaking'].includes(type))
     return res.status(400).json({ error: '題型值無效' });
   if (grade_level && !['elementary_6', 'junior_high', 'grade_7', 'grade_8', 'grade_9', 'bctest', 'gept_elementary'].includes(grade_level))
     return res.status(400).json({ error: '學段值無效' });
@@ -273,20 +330,21 @@ app.get('/api/exams/:id/take', (req, res) => {
     JOIN subjects s ON s.id = q.subject_id
     WHERE eq.exam_id = ? ORDER BY eq.sort_order
   `).all(req.params.id);
-  res.json({ ...exam, questions });
+  res.json({ ...exam, questions: dedupeQuestionsByContent(questions) });
 });
 
 app.post('/api/exams', requireAdmin, (req, res) => {
-  const { title, description, duration_min = 60, status = 'draft', question_ids } = req.body;
+  const { title, description, duration_min = 40, status = 'active', question_ids } = req.body;
   if (!title) return res.status(400).json({ error: '試卷標題為必填' });
   if (!['draft', 'active', 'closed'].includes(status))
     return res.status(400).json({ error: '狀態值無效' });
+  const normalizedQuestionIds = normalizeExamQuestionIds(question_ids);
   // L-2: Transaction 保護多步驟寫入
   const createExam = db.transaction(() => {
     const exam = db.prepare(`INSERT INTO exams (title, description, duration_min, status) VALUES (?,?,?,?)`).run(title, description||null, duration_min, status);
-    if (question_ids && question_ids.length) {
+    if (normalizedQuestionIds.length) {
       const ins = db.prepare(`INSERT INTO exam_questions (exam_id,question_id,sort_order,score) VALUES (?,?,?,?)`);
-      question_ids.forEach((qid, i) => ins.run(exam.lastInsertRowid, qid.id || qid, i + 1, qid.score || 5));
+      normalizedQuestionIds.forEach((qid, i) => ins.run(exam.lastInsertRowid, qid.id, i + 1, qid.score));
     }
     return exam.lastInsertRowid;
   });
@@ -298,6 +356,7 @@ app.put('/api/exams/:id', requireAdmin, (req, res) => {
   const { title, description, duration_min, status, question_ids } = req.body;
   const exam = db.prepare('SELECT id FROM exams WHERE id = ?').get(req.params.id);
   if (!exam) return res.status(404).json({ error: '找不到試卷' });
+  const normalizedQuestionIds = question_ids ? normalizeExamQuestionIds(question_ids) : null;
   // L-2: Transaction 保護；使用 COALESCE 支援部分欄位更新
   const updateExam = db.transaction(() => {
     db.prepare(`
@@ -306,10 +365,10 @@ app.put('/api/exams/:id', requireAdmin, (req, res) => {
         duration_min=COALESCE(?,duration_min), status=COALESCE(?,status)
       WHERE id=?
     `).run(title||null, description||null, duration_min||null, status||null, req.params.id);
-    if (question_ids) {
+    if (normalizedQuestionIds) {
       db.prepare(`DELETE FROM exam_questions WHERE exam_id = ?`).run(req.params.id);
       const ins = db.prepare(`INSERT INTO exam_questions (exam_id,question_id,sort_order,score) VALUES (?,?,?,?)`);
-      question_ids.forEach((qid, i) => ins.run(req.params.id, qid.id || qid, i + 1, qid.score || 5));
+      normalizedQuestionIds.forEach((qid, i) => ins.run(req.params.id, qid.id, i + 1, qid.score));
     }
   });
   updateExam();
@@ -344,12 +403,15 @@ app.post('/api/generate/questions', requireAdmin, async (req, res) => {
     const subject = db.prepare('SELECT * FROM subjects WHERE id = ?').get(subject_id);
     if (!subject) return res.status(404).json({ error: '找不到指定科目' });
 
-    const typeLabel = { choice: '單選題（A/B/C/D）', fill: '填空題', calculation: '計算題', listening: '英語聽力選擇題', cloze: 'GEPT 段落填空', reading: 'GEPT 閱讀理解', writing: 'GEPT 寫作', speaking: 'GEPT 口說' }[type] || type;
+    const typeLabel = { choice: '單選題（A/B/C/D）', true_false: '是非題（T/F）', fill: '填空題', calculation: '計算題', listening: '英語聽力選擇題', cloze: 'GEPT 段落填空', reading: 'GEPT 閱讀理解', writing: 'GEPT 寫作', speaking: 'GEPT 口說' }[type] || type;
     const gradeLabelMap = {elementary_6:'國小六年級',junior_high:'升國中（資優班）',grade_7:'國一（七年級）',grade_8:'國二（八年級）',grade_9:'國三（九年級）',bctest:'國中教育會考',gept_elementary:'全民英檢初級'};
     const gradeLabel = gradeLabelMap[grade_level] || '升國中（資優班）';
-    const userPrompt = `請出 ${count} 題「${subject.name}」${gradeLabel}的${typeLabel}，難度 ${difficulty}/5（1 最易，5 最難）。${hint ? `\n補充要求：${hint}` : ''}`;
+    const userPrompt = `請出 ${count} 題「${subject.name}」${gradeLabel}的${typeLabel}，難度 ${difficulty}/5（1 最易，5 最難）。
+請使用自然、可直接顯示的繁體中文純文字，不要使用 LaTeX、不要使用 Markdown 數學語法，也不要使用特殊數學排版符號。
+若有數學條件，請改寫成一般文字，例如「A不等於0」、「三位數 ABC」、「x平方」。
+${hint ? `補充要求：${hint}` : ''}`;
 
-    const questions = await generateQuestions(provider, userPrompt);
+    const questions = dedupeQuestionsByContent(await generateQuestions(provider, userPrompt));
 
     // 將科目與型別資訊補入預覽結果
     const preview = questions.slice(0, count).map(q => ({
@@ -506,7 +568,7 @@ async function archiveAndReplace() {
 
     // 嘗試 LLM 自動生成替換題
     const newDiff = Math.min(q.difficulty + 1, 5);
-    const typeLabel = { choice: '單選題（A/B/C/D）', fill: '填空題', calculation: '計算題', listening: '英語聽力選擇題', cloze: 'GEPT 段落填空', reading: 'GEPT 閱讀理解', writing: 'GEPT 寫作', speaking: 'GEPT 口說' }[q.type] || q.type;
+    const typeLabel = { choice: '單選題（A/B/C/D）', true_false: '是非題（T/F）', fill: '填空題', calculation: '計算題', listening: '英語聽力選擇題', cloze: 'GEPT 段落填空', reading: 'GEPT 閱讀理解', writing: 'GEPT 寫作', speaking: 'GEPT 口說' }[q.type] || q.type;
     const gradeLabelMap2 = {elementary_6:'國小六年級',junior_high:'升國中（資優班）',grade_7:'國一（七年級）',grade_8:'國二（八年級）',grade_9:'國三（九年級）',bctest:'國中教育會考',gept_elementary:'全民英檢初級'};
     const gradeLabel = gradeLabelMap2[q.grade_level] || '升國中（資優班）';
     const prompt = `請出 1 題「${q.subject_name}」${gradeLabel}的${typeLabel}，難度 ${newDiff}/5（1 最易，5 最難）。請勿與以下題目重複：${q.content}`;
@@ -901,8 +963,9 @@ app.get('/api/recommendations', (req, res) => {
     const w = ['q.is_archived = 0']; const p = [];
     if (grade_level) { w.push('q.grade_level = ?'); p.push(grade_level); }
     if (subject_id)  { w.push('q.subject_id = ?');  p.push(subject_id); }
-    const qs = db.prepare(`SELECT q.*, s.name as subject_name FROM questions q JOIN subjects s ON s.id = q.subject_id WHERE ${w.join(' AND ')} ORDER BY RANDOM() LIMIT ?`).all(...p, n);
-    return res.json({ recommendations: qs, context: { reason: '無歷史資料，隨機推薦' } });
+    const qs = db.prepare(`SELECT q.*, s.name as subject_name FROM questions q JOIN subjects s ON s.id = q.subject_id WHERE ${w.join(' AND ')} ORDER BY RANDOM() LIMIT ?`).all(...p, n * 5);
+    const uniqueQs = dedupeQuestionsByContent(qs).slice(0, n);
+    return res.json({ recommendations: uniqueQs, context: { reason: '無歷史資料，隨機推薦' } });
   }
 
   const swhere = ['1=1']; const sparams = [];
@@ -913,8 +976,8 @@ app.get('/api/recommendations', (req, res) => {
   if (!subs.length) {
     const w = ['q.is_archived = 0']; const p = [];
     if (grade_level) { w.push('q.grade_level = ?'); p.push(grade_level); }
-    const qs = db.prepare(`SELECT q.*, s.name as subject_name FROM questions q JOIN subjects s ON s.id = q.subject_id WHERE ${w.join(' AND ')} ORDER BY RANDOM() LIMIT ?`).all(...p, n);
-    return res.json({ recommendations: qs, context: { reason: '無歷史資料，隨機推薦' } });
+    const qs = db.prepare(`SELECT q.*, s.name as subject_name FROM questions q JOIN subjects s ON s.id = q.subject_id WHERE ${w.join(' AND ')} ORDER BY RANDOM() LIMIT ?`).all(...p, n * 5);
+    return res.json({ recommendations: dedupeQuestionsByContent(qs).slice(0, n), context: { reason: '無歷史資料，隨機推薦' } });
   }
 
   const ids = subs.map(s => s.id);
@@ -958,7 +1021,7 @@ app.get('/api/recommendations', (req, res) => {
   if (grade_level)     { sql += ' AND q.grade_level = ?'; params.push(grade_level); }
   sql += ' ORDER BY RANDOM() LIMIT ?'; params.push(n);
 
-  let recs = db.prepare(sql).all(...params);
+  let recs = dedupeQuestionsByContent(db.prepare(sql).all(...params));
 
   // Broaden if insufficient
   if (recs.length < n) {
@@ -968,7 +1031,7 @@ app.get('/api/recommendations', (req, res) => {
     if (grade_level)     { sql2 += ' AND q.grade_level = ?'; p2.push(grade_level); }
     sql2 += ' ORDER BY RANDOM() LIMIT ?'; p2.push(n - recs.length);
     const existing = new Set(recs.map(r => r.id));
-    recs = [...recs, ...db.prepare(sql2).all(...p2).filter(r => !existing.has(r.id))];
+    recs = dedupeQuestionsByContent([...recs, ...db.prepare(sql2).all(...p2).filter(r => !existing.has(r.id))]);
   }
 
   const tname = targetSubjectId && bySubject[targetSubjectId] ? bySubject[targetSubjectId].name : '全科目';
@@ -993,14 +1056,14 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`\n🎓 升國中數理資優班考題系統\n   http://localhost:${PORT}\n`))
+app.listen(PORT, () => console.log(`\n升國中數理資優班考題系統\n   http://localhost:${PORT}\n`))
   .on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
-      console.error(`\n❌ 錯誤：Port ${PORT} 已被其他程式佔用。`);
+      console.error(`\n錯誤：Port ${PORT} 已被其他程式佔用。`);
       console.error(`   請先關閉佔用 port 的程式，或改用其他 port：`);
       console.error(`   set PORT=8080 && node server.js\n`);
     } else {
-      console.error(`\n❌ 伺服器啟動失敗：${err.message}\n`);
+      console.error(`\n伺服器啟動失敗：${err.message}\n`);
     }
     process.exit(1);
   });

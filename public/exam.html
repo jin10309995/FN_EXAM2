@@ -86,7 +86,7 @@ function renderCurrentQuestion(idx) {
   const container = document.getElementById('questions-container');
   const q = examData.questions[idx];
   const typeLabel = {
-    choice: '選擇題', fill: '填空題', listening: '🎧 聽力',
+    choice: '選擇題', true_false: '是非題', fill: '填空題', listening: '🎧 聽力',
     cloze: '📝 段落填空', reading: '📖 閱讀理解', writing: '✍️ 寫作', speaking: '🎤 口說'
   }[q.type] || q.type;
   const typeTag = typeLabel ? ` · ${typeLabel}` : '';
@@ -129,7 +129,7 @@ function restoreAnswer(q, idx) {
     return;
   }
   if (!val) return;
-  if (q.type === 'choice' || q.type === 'reading') {
+  if (q.type === 'choice' || q.type === 'reading' || q.type === 'true_false') {
     const radio = document.querySelector(`input[name="q-${idx}"][value="${val}"]`);
     if (radio) radio.checked = true;
   } else if (q.type === 'cloze') {
@@ -190,6 +190,8 @@ function goToQuestion(idx) {
 function renderAnswer(q, i) {
   if (q.type === 'choice' || q.type === 'reading') {
     return renderChoices(q, i);
+  } else if (q.type === 'true_false') {
+    return renderTrueFalse(q, i);
   } else if (q.type === 'cloze') {
     return renderCloze(q, i);
   } else if (q.type === 'writing') {
@@ -284,6 +286,16 @@ function renderChoices(q, idx) {
   }).join('') + renderDontKnow(idx);
 }
 
+function renderTrueFalse(q, idx) {
+  return [
+    { value: 'T', label: '是' },
+    { value: 'F', label: '否' }
+  ].map(opt => `<label class="flex items-start gap-3 p-3 rounded-lg border-2 border-transparent hover:border-indigo-200 hover:bg-indigo-50 cursor-pointer mb-2 transition-all">
+      <input type="radio" name="q-${idx}" value="${opt.value}" onchange="setAnswer(${idx}, '${opt.value}')" class="mt-0.5 accent-indigo-600">
+      <span class="font-medium text-indigo-700 min-w-4">${opt.label}</span>
+    </label>`).join('') + renderDontKnow(idx);
+}
+
 function renderFill(q, idx) {
   return `<input type="text" id="fill-${idx}" placeholder="請填寫答案" onchange="setAnswer(${idx}, this.value)"
     class="w-full border-2 border-gray-300 focus:border-indigo-500 rounded-lg px-3 py-2 outline-none transition-colors">` + renderDontKnow(idx);
@@ -362,7 +374,7 @@ function toggleDontKnow(idx) {
     // 設定「我不會」，清除其他答案輸入
     answers[qid] = '__dont_know__';
     const q = examData.questions[idx];
-    if (q.type === 'choice' || q.type === 'reading') {
+    if (q.type === 'choice' || q.type === 'reading' || q.type === 'true_false') {
       document.querySelectorAll(`input[name="q-${idx}"]`).forEach(r => r.checked = false);
     } else if (q.type === 'cloze') {
       const blanks = (q.answer || '').split('|').length;

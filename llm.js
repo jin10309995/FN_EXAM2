@@ -11,6 +11,12 @@ const SYSTEM_PROMPT = `你是一位專業的臺灣國中數理資優班出題老
 - answer: 答案（選擇題填 A/B/C/D，填空題填標準答案字串）
 - explanation: 詳解（字串，建議填寫）
 - tags: 關鍵字標籤，以逗號分隔（字串，例如："方程式,一元一次"）
+- 若題型為是非題，題目應為單一敘述句，answer 只能填 T 或 F，選項欄位留 null
+- 若題型為選擇題，請務必提供完整四個選項，且 answer 只能是 A/B/C/D
+- 若題型為填空題，請直接提供標準答案與解析
+- 題目內容、選項、解析一律使用自然的繁體中文純文字
+- 不要使用 LaTeX、不要使用 Markdown 數學語法、不要輸出 \$、\\overline、\\ne、\\frac、上下標等符號格式
+- 數學式請改寫成一般可讀文字，例如「3x + 5 = 17」、「A不等於0」、「三位數 ABC」
 只輸出純 JSON 陣列，不要有任何前後文說明。`;
 
 /**
@@ -21,14 +27,14 @@ const SYSTEM_PROMPT = `你是一位專業的臺灣國中數理資優班出題老
  */
 async function generateQuestions(provider, userPrompt) {
   switch (provider) {
-    case 'openai':  return callOpenAI(userPrompt);
-    case 'gemini':  return callGemini(userPrompt);
-    case 'claude':  return callClaude(userPrompt);
+    case 'openai':  return callOpenAI(SYSTEM_PROMPT, userPrompt);
+    case 'gemini':  return callGemini(SYSTEM_PROMPT, userPrompt);
+    case 'claude':  return callClaude(SYSTEM_PROMPT, userPrompt);
     default: throw new Error(`不支援的 LLM provider: ${provider}`);
   }
 }
 
-async function callOpenAI(userPrompt) {
+async function callOpenAI(systemPrompt, userPrompt) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error('OPENAI_API_KEY 未設定');
 
@@ -38,7 +44,7 @@ async function callOpenAI(userPrompt) {
   const response = await client.chat.completions.create({
     model: 'gpt-4o-mini',
     messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: systemPrompt },
       { role: 'user',   content: userPrompt }
     ],
     temperature: 0.8,
@@ -49,7 +55,7 @@ async function callOpenAI(userPrompt) {
   return parseJsonResponse(raw);
 }
 
-async function callGemini(userPrompt) {
+async function callGemini(systemPrompt, userPrompt) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY 未設定');
 
@@ -60,13 +66,13 @@ async function callGemini(userPrompt) {
     generationConfig: { responseMimeType: 'application/json', temperature: 0.8 }
   });
 
-  const fullPrompt = `${SYSTEM_PROMPT}\n\n${userPrompt}`;
+  const fullPrompt = `${systemPrompt}\n\n${userPrompt}`;
   const result = await model.generateContent(fullPrompt);
   const raw = result.response.text();
   return parseJsonResponse(raw);
 }
 
-async function callClaude(userPrompt) {
+async function callClaude(systemPrompt, userPrompt) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY 未設定');
 
@@ -76,7 +82,7 @@ async function callClaude(userPrompt) {
   const message = await client.messages.create({
     model: 'claude-3-5-haiku-20241022',
     max_tokens: 4096,
-    system: SYSTEM_PROMPT,
+    system: systemPrompt,
     messages: [{ role: 'user', content: userPrompt }]
   });
 

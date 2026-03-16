@@ -1,33 +1,34 @@
 @echo off
-echo 🎓 升國中數理資優班考題系統 - 初始化設定
+chcp 65001 >nul
+echo Gifted Exam System - Setup
 echo.
 
-echo [1/4] 安裝 Node.js 套件...
+echo [1/4] Installing Node.js packages...
 call npm install
 if errorlevel 1 (
-  echo     ✗ npm install 失敗，請確認已安裝 Node.js ^(https://nodejs.org^)
+  echo [ERROR] npm install failed. Please make sure Node.js is installed: https://nodejs.org
   pause
   exit /b 1
 )
-echo     ✓ 套件安裝完成
+echo [OK] Packages installed.
 
 echo.
-echo [2/4] 產生前端檔案...
+echo [2/4] Generating public files...
 call node generate-public.js
-echo     ✓ 前端檔案完成
+echo [OK] Public files generated.
 
 echo.
-echo [3/4] 初始化資料庫...
+echo [3/4] Initializing database...
 call node -e "require('./database')"
-echo     ✓ 資料庫初始化完成
+echo [OK] Database initialized.
 
 echo.
-echo [4/4] 植入範例題目...
+echo [4/4] Seeding sample data...
 call node seed.js
-echo     ✓ 範例題目完成
+echo [OK] Sample data seeded.
 
 echo.
 echo ============================================
-echo  設定完成！請執行 start.bat 啟動系統
+echo Setup complete. Run start.bat to start.
 echo ============================================
 pause

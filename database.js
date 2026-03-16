@@ -17,7 +17,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS questions (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     subject_id   INTEGER NOT NULL REFERENCES subjects(id),
-    type         TEXT NOT NULL CHECK(type IN ('choice','fill','calculation','listening')),
+    type         TEXT NOT NULL CHECK(type IN ('choice','true_false','fill','calculation','listening')),
     difficulty   INTEGER NOT NULL CHECK(difficulty BETWEEN 1 AND 5),
     content      TEXT NOT NULL,
     option_a     TEXT,
@@ -157,12 +157,13 @@ if (!subjectCols.includes('grade_level')) {
   }
 }
 
-// Migration: update questions type CHECK constraint to include 'listening', GEPT types
+// Migration: update questions type CHECK constraint to include 'true_false', 'listening', GEPT types
 {
   const schemaRow = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='questions'`).get();
   const needsGeptTypes = schemaRow && !schemaRow.sql.includes("'cloze'");
+  const needsTrueFalse = schemaRow && !schemaRow.sql.includes("'true_false'");
   const needsListening = schemaRow && !schemaRow.sql.includes("'listening'");
-  if (needsListening || needsGeptTypes) {
+  if (needsTrueFalse || needsListening || needsGeptTypes) {
     db.exec(`PRAGMA foreign_keys = OFF`);
     // legacy_alter_table prevents SQLite from auto-rewriting FK references in other
     // tables when we rename questions → questions_old, avoiding dangling references.
@@ -173,7 +174,7 @@ if (!subjectCols.includes('grade_level')) {
         CREATE TABLE questions (
           id               INTEGER PRIMARY KEY AUTOINCREMENT,
           subject_id       INTEGER NOT NULL REFERENCES subjects(id),
-          type             TEXT NOT NULL CHECK(type IN ('choice','fill','calculation','listening','cloze','reading','writing','speaking')),
+          type             TEXT NOT NULL CHECK(type IN ('choice','true_false','fill','calculation','listening','cloze','reading','writing','speaking')),
           difficulty       INTEGER NOT NULL CHECK(difficulty BETWEEN 1 AND 5),
           content          TEXT NOT NULL,
           option_a         TEXT,

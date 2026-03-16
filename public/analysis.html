@@ -21,6 +21,7 @@
 const id = new URLSearchParams(location.search).get('id');
 function getOptionLabel(q, letter) {
   if (!letter) return '（未作答）';
+  if (q.type === 'true_false') return letter.toUpperCase() === 'T' ? '是' : '否';
   const map = { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d };
   const text = map[letter.toUpperCase()];
   return text ? letter.toUpperCase() + '. ' + escHtml(text) : letter.toUpperCase();
@@ -80,7 +81,7 @@ async function loadAnalysis() {
     const statusTag  = isDontKnow ? '<span class="text-xs text-orange-500">🤷 我不會</span>' : '<span class="text-xs text-red-500">✗ 答錯</span>';
     const givenHtml  = isDontKnow
       ? '<p>你的答案：<span class="text-orange-600 font-medium">🤷 我不會</span></p>'
-      : (q.type==='choice'
+      : (['choice','true_false'].includes(q.type)
           ? `<p>你的答案：<span class="text-red-500 font-medium">${getOptionLabel(q, q.given_answer)}</span></p>`
           : `<p>你的答案：<span class="text-red-500 font-medium">${escHtml(q.given_answer)||'（未作答）'}</span></p>`);
     return `
@@ -92,7 +93,7 @@ async function loadAnalysis() {
       <p class="text-gray-800 mb-2">${escHtml(q.content)}</p>
       <div class="text-sm space-y-1">
         ${givenHtml}
-        ${q.type==='choice' ? `<p>正確答案：<span class="text-green-600 font-medium">${getOptionLabel(q, q.correct_answer)}</span></p>` : `<p>正確答案：<span class="text-green-600 font-medium">${escHtml(q.correct_answer)}</span></p>`}
+        ${['choice','true_false'].includes(q.type) ? `<p>正確答案：<span class="text-green-600 font-medium">${getOptionLabel(q, q.correct_answer)}</span></p>` : `<p>正確答案：<span class="text-green-600 font-medium">${escHtml(q.correct_answer)}</span></p>`}
         ${q.explanation ? `<p class="text-gray-500 mt-2 bg-gray-50 p-2 rounded">💡 ${escHtml(q.explanation)}</p>` : ''}
       </div>
     </div>

@@ -176,5 +176,5 @@ const sciIds  = db.prepare('SELECT id FROM questions WHERE subject_id = 2 LIMIT 
 const insEQ = db.prepare(`INSERT INTO exam_questions (exam_id,question_id,sort_order,score) VALUES (?,?,?,?)`);
 [...mathIds, ...sciIds].forEach((q, i) => insEQ.run(examResult.lastInsertRowid, q.id, i + 1, 10));
 
-console.log(`✅ 成功植入 ${count} 道題目`);
-console.log(`✅ 建立範例試卷（ID: ${examResult.lastInsertRowid}）`);
+console.log(`[OK] 成功植入 ${count} 道題目`);
+console.log(`[OK] 建立範例試卷（ID: ${examResult.lastInsertRowid}）`);

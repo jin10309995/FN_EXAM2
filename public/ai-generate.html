@@ -78,6 +78,7 @@
         <label class="block text-sm font-medium text-gray-600 mb-1">題型</label>
         <select id="type" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
           <option value="choice">選擇題</option>
+          <option value="true_false">是非題</option>
           <option value="fill">填空題</option>
         </select>
       </div>
@@ -194,7 +195,17 @@ async function generate() {
 function renderPreview(questions) {
   const area = document.getElementById('preview-area');
   if (!questions.length) { area.innerHTML = '<p class="text-gray-400 text-center py-8">沒有生成任何題目</p>'; return; }
-  const typeMap = {choice:'選擇題', fill:'填空題'};
+  const typeMap = {
+    choice:'選擇題',
+    true_false:'是非題',
+    fill:'填空題',
+    calculation:'計算題',
+    listening:'聽力題',
+    cloze:'段落填空',
+    reading:'閱讀理解',
+    writing:'寫作',
+    speaking:'口說'
+  };
   area.innerHTML = questions.map((q, i) => `
     <div class="bg-white rounded-xl shadow p-5 mb-4 border-l-4 border-indigo-400">
       <div class="flex items-start gap-3">

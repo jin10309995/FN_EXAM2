@@ -7,7 +7,7 @@ const path = require('path');
 
 if (!fs.existsSync('public')) {
   fs.mkdirSync('public');
-  console.log('✅ 建立 public/ 資料夾');
+  console.log('[OK] 建立 public/ 資料夾');
 }
 
 // ── index.html (首頁) ──────────────────────────────────────────────────────
@@ -195,7 +195,7 @@ function renderCurrentQuestion(idx) {
   const container = document.getElementById('questions-container');
   const q = examData.questions[idx];
   const typeLabel = {
-    choice: '選擇題', fill: '填空題', listening: '🎧 聽力',
+    choice: '選擇題', true_false: '是非題', fill: '填空題', listening: '🎧 聽力',
     cloze: '📝 段落填空', reading: '📖 閱讀理解', writing: '✍️ 寫作', speaking: '🎤 口說'
   }[q.type] || q.type;
   const typeTag = typeLabel ? \` · \${typeLabel}\` : '';
@@ -238,7 +238,7 @@ function restoreAnswer(q, idx) {
     return;
   }
   if (!val) return;
-  if (q.type === 'choice' || q.type === 'reading') {
+  if (q.type === 'choice' || q.type === 'reading' || q.type === 'true_false') {
     const radio = document.querySelector(\`input[name="q-\${idx}"][value="\${val}"]\`);
     if (radio) radio.checked = true;
   } else if (q.type === 'cloze') {
@@ -299,6 +299,8 @@ function goToQuestion(idx) {
 function renderAnswer(q, i) {
   if (q.type === 'choice' || q.type === 'reading') {
     return renderChoices(q, i);
+  } else if (q.type === 'true_false') {
+    return renderTrueFalse(q, i);
   } else if (q.type === 'cloze') {
     return renderCloze(q, i);
   } else if (q.type === 'writing') {
@@ -393,6 +395,16 @@ function renderChoices(q, idx) {
   }).join('') + renderDontKnow(idx);
 }
 
+function renderTrueFalse(q, idx) {
+  return [
+    { value: 'T', label: '是' },
+    { value: 'F', label: '否' }
+  ].map(opt => \`<label class="flex items-start gap-3 p-3 rounded-lg border-2 border-transparent hover:border-indigo-200 hover:bg-indigo-50 cursor-pointer mb-2 transition-all">
+      <input type="radio" name="q-\${idx}" value="\${opt.value}" onchange="setAnswer(\${idx}, '\${opt.value}')" class="mt-0.5 accent-indigo-600">
+      <span class="font-medium text-indigo-700 min-w-4">\${opt.label}</span>
+    </label>\`).join('') + renderDontKnow(idx);
+}
+
 function renderFill(q, idx) {
   return \`<input type="text" id="fill-\${idx}" placeholder="請填寫答案" onchange="setAnswer(\${idx}, this.value)"
     class="w-full border-2 border-gray-300 focus:border-indigo-500 rounded-lg px-3 py-2 outline-none transition-colors">\` + renderDontKnow(idx);
@@ -471,7 +483,7 @@ function toggleDontKnow(idx) {
     // 設定「我不會」，清除其他答案輸入
     answers[qid] = '__dont_know__';
     const q = examData.questions[idx];
-    if (q.type === 'choice' || q.type === 'reading') {
+    if (q.type === 'choice' || q.type === 'reading' || q.type === 'true_false') {
       document.querySelectorAll(\`input[name="q-\${idx}"]\`).forEach(r => r.checked = false);
     } else if (q.type === 'cloze') {
       const blanks = (q.answer || '').split('|').length;
@@ -615,6 +627,7 @@ const resultHtml = `<!DOCTYPE html>
 const id = new URLSearchParams(location.search).get('id');
 function getOptionLabel(q, letter) {
   if (!letter) return '（未作答）';
+  if (q.type === 'true_false') return letter.toUpperCase() === 'T' ? '是' : '否';
   const map = { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d };
   const text = map[letter.toUpperCase()];
   return text ? letter.toUpperCase() + '. ' + escHtml(text) : letter.toUpperCase();
@@ -640,7 +653,7 @@ async function loadResult() {
         const statusText  = d.is_correct ? '✓ 答對 +'+d.score_earned+'分' : isDontKnow ? '🤷 我不會' : isPending ? '⏳ 待批改' : '✗ 答錯';
         const givenDisplay = isDontKnow ? '<span class="text-orange-600 font-medium">🤷 我不會</span>'
           : isPending ? \`<span class="text-blue-600">\${escHtml(d.given_answer) || '（未作答）'}</span>\`
-          : \`<span class="\${d.is_correct ? 'text-green-600' : 'text-red-600'} font-medium">\${d.type === 'choice' ? getOptionLabel(d, d.given_answer) : (escHtml(d.given_answer) || '（未作答）')}</span>\`;
+          : \`<span class="\${d.is_correct ? 'text-green-600' : 'text-red-600'} font-medium">\${['choice','true_false'].includes(d.type) ? getOptionLabel(d, d.given_answer) : (escHtml(d.given_answer) || '（未作答）')}</span>\`;
         return \`
         <div class="bg-white rounded-xl shadow p-5 border-l-4 \${borderColor}">
           <div class="flex justify-between mb-2">
@@ -650,8 +663,8 @@ async function loadResult() {
           <p class="text-gray-800 mb-3">\${escHtml(d.content)}</p>
           <div class="text-sm space-y-1">
             <p>你的答案：\${givenDisplay}</p>
-            \${(!d.is_correct && !isDontKnow && !isPending) ? \`<p>正確答案：<span class="text-green-600 font-medium">\${d.type === 'choice' ? getOptionLabel(d, d.correct_answer) : escHtml(d.correct_answer)}</span></p>\` : ''}
-            \${isDontKnow ? \`<p>正確答案：<span class="text-green-600 font-medium">\${d.type === 'choice' ? getOptionLabel(d, d.correct_answer) : escHtml(d.correct_answer)}</span></p><p class="text-orange-500 text-xs mt-1">📌 此題已標記為需加強，出題時將優先複習</p>\` : ''}
+            \${(!d.is_correct && !isDontKnow && !isPending) ? \`<p>正確答案：<span class="text-green-600 font-medium">\${['choice','true_false'].includes(d.type) ? getOptionLabel(d, d.correct_answer) : escHtml(d.correct_answer)}</span></p>\` : ''}
+            \${isDontKnow ? \`<p>正確答案：<span class="text-green-600 font-medium">\${['choice','true_false'].includes(d.type) ? getOptionLabel(d, d.correct_answer) : escHtml(d.correct_answer)}</span></p><p class="text-orange-500 text-xs mt-1">📌 此題已標記為需加強，出題時將優先複習</p>\` : ''}
             \${isPending ? '<p class="text-blue-500 text-xs mt-1">📋 此題為寫作/口說題，將由老師批改後更新分數</p>' : ''}
             \${d.explanation ? \`<p class="text-gray-500 mt-2 bg-gray-50 p-2 rounded">💡 \${escHtml(d.explanation)}</p>\` : ''}
           </div>
@@ -718,6 +731,7 @@ body{font-family:'Noto Sans TC',sans-serif;}
       </select>
       <select id="filter-type" onchange="loadQuestions()" class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
         <option value="">全部題型</option>
+        <option value="true_false">是非題</option>
         <option value="choice">選擇題</option>
         <option value="fill">填空題</option>
       </select>
@@ -876,6 +890,7 @@ body{font-family:'Noto Sans TC',sans-serif;}
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">題型 *</label>
             <select id="q-type" onchange="toggleOptions()" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" required>
+              <option value="true_false">是非題</option>
               <option value="choice">選擇題</option>
               <option value="fill">填空題</option>
               <option value="listening" class="listen-auto" hidden disabled>聽力題（自動）</option>
@@ -895,6 +910,15 @@ body{font-family:'Noto Sans TC',sans-serif;}
               <option value="5">★★★★★ 競賽</option>
             </select>
           </div>
+        </div>
+        <div class="flex items-center gap-3">
+          <button id="q-ai-generate-btn" type="button" onclick="generateQuestionDraft()" class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium transition-colors">AI 自動填寫題目</button>
+          <select id="q-ai-provider" class="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white">
+            <option value="openai">OpenAI</option>
+            <option value="gemini" selected>Google Gemini</option>
+            <option value="claude">Anthropic Claude</option>
+          </select>
+          <span id="q-ai-generate-status" class="text-sm text-gray-500"></span>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">題目內容 *</label>
@@ -1001,13 +1025,13 @@ body{font-family:'Noto Sans TC',sans-serif;}
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">考試時間（分鐘）</label>
-          <input id="exam-duration-input" type="number" value="60" min="10" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+          <input id="exam-duration-input" type="number" value="40" min="10" class="w-full border border-gray-300 rounded-lg px-3 py-2">
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">狀態</label>
           <select id="exam-status-input" class="w-full border border-gray-300 rounded-lg px-3 py-2">
             <option value="draft">草稿</option>
-            <option value="active">開放考試</option>
+            <option value="active" selected>開放考試</option>
             <option value="closed">已關閉</option>
           </select>
         </div>
@@ -1062,6 +1086,7 @@ body{font-family:'Noto Sans TC',sans-serif;}
             <label class="block text-xs text-gray-500 mb-1">題型</label>
             <select id="rand-type" class="border border-gray-300 rounded px-2 py-1 text-sm">
               <option value="">全部</option>
+              <option value="true_false">是非題</option>
               <option value="choice">選擇題</option>
               <option value="fill">填空題</option>
             </select>
@@ -1097,7 +1122,7 @@ body{font-family:'Noto Sans TC',sans-serif;}
       <div class="border rounded-xl p-4 mb-4">
         <div class="flex items-center justify-between mb-3">
           <h4 class="font-medium text-gray-700">已選題目 <span id="selected-count" class="text-indigo-600">0</span> 題</h4>
-          <button onclick="sortSelectedByType()" class="px-3 py-1 rounded-lg bg-amber-50 border border-amber-300 text-amber-700 hover:bg-amber-100 text-xs font-medium">⇅ 自動排序（選擇→填空→其他）</button>
+          <button onclick="sortSelectedByType()" class="px-3 py-1 rounded-lg bg-amber-50 border border-amber-300 text-amber-700 hover:bg-amber-100 text-xs font-medium">⇅ 自動排序（是非→選擇→填空）</button>
         </div>
         <div id="selected-questions" class="space-y-1 text-sm max-h-48 overflow-y-auto"></div>
       </div>
@@ -1116,6 +1141,19 @@ let editingExamId = null;
 let selectedQuestions = {};
 let selectedQuestionsOrder = [];
 let allExamQPool = [];
+
+function apiKey() {
+  return document.getElementById('api_key')?.value?.trim() || '';
+}
+
+function uniqueQuestionIds(ids) {
+  const seen = new Set();
+  return ids.filter(id => {
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
 
 // ── Init ──────────────────────────────────────────────────────────────────
 async function init() {
@@ -1417,7 +1455,7 @@ async function loadQuestions(page = 1) {
 
   const res = await fetch('/api/questions?' + params);
   const data = await res.json();
-  const typeLabel = {choice:'選擇題',fill:'填空題',listening:'聽力題',cloze:'段落填空',reading:'閱讀理解',writing:'寫作',speaking:'口說'};
+  const typeLabel = {choice:'選擇題',true_false:'是非題',fill:'填空題',listening:'聽力題',cloze:'段落填空',reading:'閱讀理解',writing:'寫作',speaking:'口說'};
   const gradeLabel = {junior_high:'升國中',elementary_6:'國小六年級',grade_7:'國一',grade_8:'國二',grade_9:'國三',bctest:'會考'};
   const gradeCls = {elementary_6:'bg-green-50 text-green-700',junior_high:'bg-blue-50 text-blue-700',grade_7:'bg-purple-50 text-purple-700',grade_8:'bg-orange-50 text-orange-700',grade_9:'bg-red-50 text-red-700',bctest:'bg-yellow-50 text-yellow-700'};
   const tbody = data.data.map(q => \`
@@ -1456,6 +1494,9 @@ async function loadQuestions(page = 1) {
 function openQuestionModal(data = null) {
   editingQuestionId = data ? data.id : null;
   document.getElementById('modal-title').textContent = data ? '編輯題目' : '新增題目';
+  document.getElementById('q-ai-generate-status').textContent = '';
+  document.getElementById('q-ai-generate-btn').disabled = false;
+  document.getElementById('q-ai-generate-btn').classList.remove('opacity-60', 'cursor-not-allowed');
   const gradeLevel = data?.grade_level || 'junior_high';
   document.getElementById('q-grade-level').value  = gradeLevel;
   // 先填入其他欄位
@@ -1500,6 +1541,9 @@ function toggleOptions() {
   document.getElementById('cloze-hint').classList.toggle('hidden', !isCloze);
   document.getElementById('writing-hint').classList.toggle('hidden', !isWriting);
   document.getElementById('speaking-hint').classList.toggle('hidden', !isSpeaking);
+  document.getElementById('q-answer').placeholder = type === 'true_false'
+    ? '是非題填 T 或 F'
+    : '選擇題填 A/B/C/D，填空題填答案';
 }
 
 async function uploadImage(input) {
@@ -1531,19 +1575,8 @@ function previewTTS() {
   window.speechSynthesis.speak(utter);
 }
 
-async function editQuestion(id) {
-  const res = await fetch('/api/questions/' + id);
-  openQuestionModal(await res.json());
-}
-
-async function deleteQuestion(id) {
-  if (!confirm('確定刪除這道題目？')) return;
-  await fetch('/api/questions/' + id, { method: 'DELETE' });
-  loadQuestions(currentPage);
-}
-
-async function saveQuestion() {
-  const body = {
+function getQuestionFormBody() {
+  return {
     subject_id:       document.getElementById('q-subject').value,
     type:             document.getElementById('q-type').value,
     difficulty:       document.getElementById('q-difficulty').value,
@@ -1562,6 +1595,92 @@ async function saveQuestion() {
     passage_id:       document.getElementById('q-passage-id').value ? parseInt(document.getElementById('q-passage-id').value) : null,
     passage_content:  document.getElementById('q-passage-content').value.trim() || null,
   };
+}
+
+async function generateQuestionDraft() {
+  const body = getQuestionFormBody();
+  const statusEl = document.getElementById('q-ai-generate-status');
+  const btn = document.getElementById('q-ai-generate-btn');
+  if (!body.subject_id) { alert('請先選擇科目'); return; }
+  if (!body.type) { alert('請先選擇題型'); return; }
+  if (!body.difficulty) { alert('請先選擇難度'); return; }
+  const hasExistingDraft = [
+    body.content,
+    body.option_a,
+    body.option_b,
+    body.option_c,
+    body.option_d,
+    body.answer,
+    body.explanation,
+    body.tags
+  ].some(v => !!v);
+  if (hasExistingDraft && !confirm('題目內容以下欄位已有資料，確定要用 AI 重新覆蓋嗎？')) {
+    return;
+  }
+  btn.disabled = true;
+  btn.classList.add('opacity-60', 'cursor-not-allowed');
+  statusEl.textContent = 'AI 填寫中...';
+  try {
+    const res = await fetch('/api/generate/questions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey() },
+      body: JSON.stringify({
+        provider: document.getElementById('q-ai-provider').value,
+        subject_id: body.subject_id,
+        type: body.type,
+        difficulty: body.difficulty,
+        grade_level: body.grade_level,
+        count: 1
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      statusEl.textContent = '';
+      alert('產生失敗：' + (data.error || '未知錯誤'));
+      return;
+    }
+    const q = (data.questions || [])[0];
+    if (!q) {
+      statusEl.textContent = '';
+      alert('產生失敗：AI 未回傳題目');
+      return;
+    }
+    document.getElementById('q-content').value = q.content || '';
+    document.getElementById('q-opt-a').value = q.option_a || '';
+    document.getElementById('q-opt-b').value = q.option_b || '';
+    document.getElementById('q-opt-c').value = q.option_c || '';
+    document.getElementById('q-opt-d').value = q.option_d || '';
+    document.getElementById('q-answer').value = q.answer || '';
+    document.getElementById('q-explanation').value = q.explanation || '';
+    document.getElementById('q-tags').value = q.tags || '';
+    statusEl.textContent = '已填入 ' + (data.provider || 'LLM') + ' 產生的題目';
+  } catch (e) {
+    statusEl.textContent = '';
+    alert('產生失敗：' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove('opacity-60', 'cursor-not-allowed');
+  }
+}
+
+async function editQuestion(id) {
+  const res = await fetch('/api/questions/' + id);
+  openQuestionModal(await res.json());
+}
+
+async function deleteQuestion(id) {
+  if (!confirm('確定刪除這道題目？')) return;
+  await fetch('/api/questions/' + id, { method: 'DELETE' });
+  loadQuestions(currentPage);
+}
+
+async function saveQuestion() {
+  const body = getQuestionFormBody();
+  if (body.type === 'true_false') {
+    const normalized = normalizeTrueFalseAnswer(body.answer);
+    if (!normalized) { alert('是非題答案請填寫 T 或 F'); return; }
+    body.answer = normalized;
+  }
   if (!body.content) { alert('請填寫題目內容'); return; }
   if (!body.answer && !['writing','speaking'].includes(body.type)) { alert('請填寫正確答案'); return; }
   const isListeningSubject = document.getElementById('question-modal')?.dataset?.isListeningSubject === '1';
@@ -1573,6 +1692,13 @@ async function saveQuestion() {
   if (!r.ok) { const j = await r.json(); alert('儲存失敗：' + (j.error||'未知')); return; }
   closeModal('question-modal');
   loadQuestions(currentPage);
+}
+
+function normalizeTrueFalseAnswer(answer) {
+  const val = (answer || '').trim().toUpperCase();
+  if (['T', 'TRUE', '是', 'O', 'Y', 'YES'].includes(val)) return 'T';
+  if (['F', 'FALSE', '否', 'X', 'N', 'NO'].includes(val)) return 'F';
+  return '';
 }
 
 // ── Exams ─────────────────────────────────────────────────────────────────
@@ -1608,8 +1734,8 @@ async function openExamModal(data = null) {
   document.getElementById('exam-modal-title').textContent = data ? '編輯試卷' : '新增試卷';
   document.getElementById('exam-title-input').value = data?.title || '';
   document.getElementById('exam-desc-input').value = data?.description || '';
-  document.getElementById('exam-duration-input').value = data?.duration_min || 60;
-  document.getElementById('exam-status-input').value = data?.status || 'draft';
+  document.getElementById('exam-duration-input').value = data?.duration_min || 40;
+  document.getElementById('exam-status-input').value = data?.status || 'active';
 
   if (data && data.questions) {
     const sorted = [...data.questions].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
@@ -1681,6 +1807,7 @@ async function randomPickQuestions() {
   if (t)    params.set('type', t);
   if (dMin) params.set('difficulty_min', dMin);
   if (dMax) params.set('difficulty_max', dMax);
+  if (selectedQuestionsOrder.length) params.set('exclude_ids', uniqueQuestionIds(selectedQuestionsOrder).join(','));
   params.set('count', cnt);
   if (weighted) params.set('weighted', '1');
   const res = await fetch('/api/questions/random?' + params);
@@ -1694,19 +1821,21 @@ async function randomPickQuestions() {
       added++;
     }
   });
+  selectedQuestionsOrder = uniqueQuestionIds(selectedQuestionsOrder);
   const msg = document.getElementById('rand-msg');
-  msg.textContent = \`已加入 \${added} 題（共抽到 \${questions.length} 題，其中 \${questions.length - added} 題已在清單中）\`;
+  msg.textContent = \`已加入 \${added} 題（共抽到 \${questions.length} 題，已自動排除重覆題）\`;
   msg.classList.remove('hidden');
   await loadExamQuestions();
   renderSelectedQuestions();
 }
 
 function sortSelectedByType() {
-  const typeOrder = { choice: 1, fill: 2 };
+  const typeOrder = { true_false: 1, choice: 2, fill: 3 };
   selectedQuestionsOrder.sort((a, b) => {
-    const ta = typeOrder[selectedQuestions[a]?.type] || 3;
-    const tb = typeOrder[selectedQuestions[b]?.type] || 3;
-    return ta - tb;
+    const ta = typeOrder[selectedQuestions[a]?.type] || 99;
+    const tb = typeOrder[selectedQuestions[b]?.type] || 99;
+    if (ta !== tb) return ta - tb;
+    return a - b;
   });
   renderSelectedQuestions();
 }
@@ -1730,10 +1859,12 @@ function renderSelectedQuestions() {
 async function saveExam() {
   const title = document.getElementById('exam-title-input').value.trim();
   if (!title) { alert('請填寫試卷名稱'); return; }
+  selectedQuestionsOrder = uniqueQuestionIds(selectedQuestionsOrder);
+  sortSelectedByType();
   const body = {
     title,
     description: document.getElementById('exam-desc-input').value.trim(),
-    duration_min: parseInt(document.getElementById('exam-duration-input').value) || 60,
+    duration_min: parseInt(document.getElementById('exam-duration-input').value) || 40,
     status: document.getElementById('exam-status-input').value,
     question_ids: selectedQuestionsOrder.map(id => ({ id, score: selectedQuestions[id]?.score || 5 }))
   };
@@ -1978,6 +2109,7 @@ const aiGenerateHtml = `<!DOCTYPE html>
         <label class="block text-sm font-medium text-gray-600 mb-1">題型</label>
         <select id="type" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
           <option value="choice">選擇題</option>
+          <option value="true_false">是非題</option>
           <option value="fill">填空題</option>
         </select>
       </div>
@@ -2094,7 +2226,17 @@ async function generate() {
 function renderPreview(questions) {
   const area = document.getElementById('preview-area');
   if (!questions.length) { area.innerHTML = '<p class="text-gray-400 text-center py-8">沒有生成任何題目</p>'; return; }
-  const typeMap = {choice:'選擇題', fill:'填空題'};
+  const typeMap = {
+    choice:'選擇題',
+    true_false:'是非題',
+    fill:'填空題',
+    calculation:'計算題',
+    listening:'聽力題',
+    cloze:'段落填空',
+    reading:'閱讀理解',
+    writing:'寫作',
+    speaking:'口說'
+  };
   area.innerHTML = questions.map((q, i) => \`
     <div class="bg-white rounded-xl shadow p-5 mb-4 border-l-4 border-indigo-400">
       <div class="flex items-start gap-3">
@@ -2197,6 +2339,7 @@ const analysisHtml = `<!DOCTYPE html>
 const id = new URLSearchParams(location.search).get('id');
 function getOptionLabel(q, letter) {
   if (!letter) return '（未作答）';
+  if (q.type === 'true_false') return letter.toUpperCase() === 'T' ? '是' : '否';
   const map = { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d };
   const text = map[letter.toUpperCase()];
   return text ? letter.toUpperCase() + '. ' + escHtml(text) : letter.toUpperCase();
@@ -2256,7 +2399,7 @@ async function loadAnalysis() {
     const statusTag  = isDontKnow ? '<span class="text-xs text-orange-500">🤷 我不會</span>' : '<span class="text-xs text-red-500">✗ 答錯</span>';
     const givenHtml  = isDontKnow
       ? '<p>你的答案：<span class="text-orange-600 font-medium">🤷 我不會</span></p>'
-      : (q.type==='choice'
+      : (['choice','true_false'].includes(q.type)
           ? \`<p>你的答案：<span class="text-red-500 font-medium">\${getOptionLabel(q, q.given_answer)}</span></p>\`
           : \`<p>你的答案：<span class="text-red-500 font-medium">\${escHtml(q.given_answer)||'（未作答）'}</span></p>\`);
     return \`
@@ -2268,7 +2411,7 @@ async function loadAnalysis() {
       <p class="text-gray-800 mb-2">\${escHtml(q.content)}</p>
       <div class="text-sm space-y-1">
         \${givenHtml}
-        \${q.type==='choice' ? \`<p>正確答案：<span class="text-green-600 font-medium">\${getOptionLabel(q, q.correct_answer)}</span></p>\` : \`<p>正確答案：<span class="text-green-600 font-medium">\${escHtml(q.correct_answer)}</span></p>\`}
+        \${['choice','true_false'].includes(q.type) ? \`<p>正確答案：<span class="text-green-600 font-medium">\${getOptionLabel(q, q.correct_answer)}</span></p>\` : \`<p>正確答案：<span class="text-green-600 font-medium">\${escHtml(q.correct_answer)}</span></p>\`}
         \${q.explanation ? \`<p class="text-gray-500 mt-2 bg-gray-50 p-2 rounded">💡 \${escHtml(q.explanation)}</p>\` : ''}
       </div>
     </div>
@@ -2396,6 +2539,6 @@ const files = {
 
 for (const [filepath, content] of Object.entries(files)) {
   fs.writeFileSync(filepath, content, 'utf8');
-  console.log('✅ 產生', filepath);
+  console.log('[OK] 產生', filepath);
 }
-console.log('\n✅ 所有前端檔案已產生完成！');
+console.log('\n所有前端檔案已產生完成！');
