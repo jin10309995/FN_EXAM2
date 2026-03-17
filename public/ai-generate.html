@@ -59,8 +59,8 @@
       <div>
         <label class="block text-sm font-medium text-gray-600 mb-1">學段</label>
         <select id="grade_level" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" onchange="loadSubjects()">
-          <option value="junior_high">升國中（資優班）</option>
           <option value="elementary_6">國小六年級</option>
+          <option value="junior_high">升國中（資優班）</option>
           <option value="grade_7">國一（七年級）</option>
           <option value="grade_8">國二（八年級）</option>
           <option value="grade_9">國三（九年級）</option>
@@ -71,7 +71,7 @@
 
       <div>
         <label class="block text-sm font-medium text-gray-600 mb-1">科目</label>
-        <select id="subject_id" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"></select>
+        <select id="subject_id" onchange="onAiSubjectChange()" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"></select>
       </div>
 
       <div>
@@ -80,6 +80,7 @@
           <option value="choice">選擇題</option>
           <option value="true_false">是非題</option>
           <option value="fill">填空題</option>
+          <option value="writing">寫作</option>
         </select>
       </div>
 
@@ -135,12 +136,22 @@
 <script>
 let generatedQuestions = [];
 
+// 科目變更 → 若為作文科目自動切換題型為寫作
+function onAiSubjectChange() {
+  const sel = document.getElementById('subject_id');
+  const code = sel.options[sel.selectedIndex]?.dataset?.code || '';
+  if (code.startsWith('ESSAY')) {
+    document.getElementById('type').value = 'writing';
+  }
+}
+
 async function loadSubjects() {
   const grade = document.getElementById('grade_level').value;
   const res = await fetch('/api/subjects?grade_level=' + grade);
   const subjects = await res.json();
   const sel = document.getElementById('subject_id');
-  sel.innerHTML = subjects.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+  sel.innerHTML = subjects.map(s => `<option value="${s.id}" data-code="${s.code || ''}">${s.name}</option>`).join('');
+  onAiSubjectChange();
 }
 
 async function generate() {

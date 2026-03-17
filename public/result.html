@@ -44,11 +44,13 @@ async function loadResult() {
       ${data.details.map((d,i) => {
         const isDontKnow = d.given_answer === '__dont_know__';
         const isPending = d.grading_status === 'pending';
-        const borderColor = d.is_correct ? 'border-green-400' : isDontKnow ? 'border-orange-400' : isPending ? 'border-blue-400' : 'border-red-400';
-        const statusColor = d.is_correct ? 'text-green-600' : isDontKnow ? 'text-orange-600' : isPending ? 'text-blue-600' : 'text-red-600';
-        const statusText  = d.is_correct ? '✓ 答對 +'+d.score_earned+'分' : isDontKnow ? '🤷 我不會' : isPending ? '⏳ 待批改' : '✗ 答錯';
+        const isGraded = d.grading_status === 'graded' && ['writing','speaking'].includes(d.type);
+        const borderColor = d.is_correct ? 'border-green-400' : isDontKnow ? 'border-orange-400' : isPending ? 'border-blue-400' : isGraded ? 'border-amber-400' : 'border-red-400';
+        const statusColor = d.is_correct ? 'text-green-600' : isDontKnow ? 'text-orange-600' : isPending ? 'text-blue-600' : isGraded ? 'text-amber-600' : 'text-red-600';
+        const statusText  = d.is_correct ? '✓ 答對 +'+d.score_earned+'分' : isDontKnow ? '🤷 我不會' : isPending ? '⏳ 待批改' : isGraded ? '✍️ 已批改 +'+(d.rubric_score||0)+'分' : '✗ 答錯';
         const givenDisplay = isDontKnow ? '<span class="text-orange-600 font-medium">🤷 我不會</span>'
           : isPending ? `<span class="text-blue-600">${escHtml(d.given_answer) || '（未作答）'}</span>`
+          : isGraded ? `<span class="text-gray-700">${escHtml(d.given_answer) || '（未作答）'}</span>`
           : `<span class="${d.is_correct ? 'text-green-600' : 'text-red-600'} font-medium">${['choice','true_false'].includes(d.type) ? getOptionLabel(d, d.given_answer) : (escHtml(d.given_answer) || '（未作答）')}</span>`;
         return `
         <div class="bg-white rounded-xl shadow p-5 border-l-4 ${borderColor}">
@@ -59,9 +61,14 @@ async function loadResult() {
           <p class="text-gray-800 mb-3">${escHtml(d.content)}</p>
           <div class="text-sm space-y-1">
             <p>你的答案：${givenDisplay}</p>
-            ${(!d.is_correct && !isDontKnow && !isPending) ? `<p>正確答案：<span class="text-green-600 font-medium">${['choice','true_false'].includes(d.type) ? getOptionLabel(d, d.correct_answer) : escHtml(d.correct_answer)}</span></p>` : ''}
+            ${(!d.is_correct && !isDontKnow && !isPending && !isGraded) ? `<p>正確答案：<span class="text-green-600 font-medium">${['choice','true_false'].includes(d.type) ? getOptionLabel(d, d.correct_answer) : escHtml(d.correct_answer)}</span></p>` : ''}
             ${isDontKnow ? `<p>正確答案：<span class="text-green-600 font-medium">${['choice','true_false'].includes(d.type) ? getOptionLabel(d, d.correct_answer) : escHtml(d.correct_answer)}</span></p><p class="text-orange-500 text-xs mt-1">📌 此題已標記為需加強，出題時將優先複習</p>` : ''}
             ${isPending ? '<p class="text-blue-500 text-xs mt-1">📋 此題為寫作/口說題，將由老師批改後更新分數</p>' : ''}
+            ${isGraded ? `<div class="mt-2 bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-1">
+              <p class="text-amber-800 font-medium text-xs">📝 老師批改結果</p>
+              <p class="text-amber-700">得分：<span class="font-bold">${d.rubric_score||0}</span> / <span class="text-gray-500">${d.score_earned||0}</span> 分</p>
+              ${d.reviewer_notes ? `<p class="text-gray-700 mt-1">評語：${escHtml(d.reviewer_notes)}</p>` : ''}
+            </div>` : ''}
             ${d.explanation ? `<p class="text-gray-500 mt-2 bg-gray-50 p-2 rounded">💡 ${escHtml(d.explanation)}</p>` : ''}
           </div>
         </div>`;

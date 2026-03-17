@@ -94,6 +94,7 @@ async function loadExams() {
           <span>📋 \${e.question_count} 題</span>
           <span>⏱ \${e.duration_min} 分鐘</span>
           <span>💯 滿分 \${e.total_score} 分</span>
+          \${e.writing_count > 0 ? \`<span class="text-orange-600">✍️ 含寫作/口說（人工批改）</span>\` : ''}
         </div>
       </div>
       <a href="/exam.html?id=\${e.id}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-lg font-medium transition-colors">開始作答</a>
@@ -438,8 +439,9 @@ function renderWriting(q, idx) {
   return \`<div class="space-y-2">
     <p class="text-sm text-orange-600 bg-orange-50 border border-orange-200 rounded p-2">✍️ 寫作題：請在下方文字框作答，完成後由老師批改。</p>
     <textarea id="fill-\${idx}" rows="6" placeholder="請在此寫下您的答案…"
-      oninput="setAnswer(\${idx}, this.value)"
+      oninput="setAnswer(\${idx}, this.value); document.getElementById('wc-\${idx}').textContent=this.value.replace(/\\\\s/g,'').length+'字'"
       class="w-full border-2 border-gray-300 focus:border-indigo-500 rounded-lg px-3 py-2 outline-none transition-colors resize-y text-sm"></textarea>
+    <div class="text-right text-xs text-gray-400">已輸入 <span id="wc-\${idx}">0</span></div>
   </div>\` + renderDontKnow(idx);
 }
 
@@ -648,11 +650,13 @@ async function loadResult() {
       \${data.details.map((d,i) => {
         const isDontKnow = d.given_answer === '__dont_know__';
         const isPending = d.grading_status === 'pending';
-        const borderColor = d.is_correct ? 'border-green-400' : isDontKnow ? 'border-orange-400' : isPending ? 'border-blue-400' : 'border-red-400';
-        const statusColor = d.is_correct ? 'text-green-600' : isDontKnow ? 'text-orange-600' : isPending ? 'text-blue-600' : 'text-red-600';
-        const statusText  = d.is_correct ? '✓ 答對 +'+d.score_earned+'分' : isDontKnow ? '🤷 我不會' : isPending ? '⏳ 待批改' : '✗ 答錯';
+        const isGraded = d.grading_status === 'graded' && ['writing','speaking'].includes(d.type);
+        const borderColor = d.is_correct ? 'border-green-400' : isDontKnow ? 'border-orange-400' : isPending ? 'border-blue-400' : isGraded ? 'border-amber-400' : 'border-red-400';
+        const statusColor = d.is_correct ? 'text-green-600' : isDontKnow ? 'text-orange-600' : isPending ? 'text-blue-600' : isGraded ? 'text-amber-600' : 'text-red-600';
+        const statusText  = d.is_correct ? '✓ 答對 +'+d.score_earned+'分' : isDontKnow ? '🤷 我不會' : isPending ? '⏳ 待批改' : isGraded ? '✍️ 已批改 +'+(d.rubric_score||0)+'分' : '✗ 答錯';
         const givenDisplay = isDontKnow ? '<span class="text-orange-600 font-medium">🤷 我不會</span>'
           : isPending ? \`<span class="text-blue-600">\${escHtml(d.given_answer) || '（未作答）'}</span>\`
+          : isGraded ? \`<span class="text-gray-700">\${escHtml(d.given_answer) || '（未作答）'}</span>\`
           : \`<span class="\${d.is_correct ? 'text-green-600' : 'text-red-600'} font-medium">\${['choice','true_false'].includes(d.type) ? getOptionLabel(d, d.given_answer) : (escHtml(d.given_answer) || '（未作答）')}</span>\`;
         return \`
         <div class="bg-white rounded-xl shadow p-5 border-l-4 \${borderColor}">
@@ -663,9 +667,14 @@ async function loadResult() {
           <p class="text-gray-800 mb-3">\${escHtml(d.content)}</p>
           <div class="text-sm space-y-1">
             <p>你的答案：\${givenDisplay}</p>
-            \${(!d.is_correct && !isDontKnow && !isPending) ? \`<p>正確答案：<span class="text-green-600 font-medium">\${['choice','true_false'].includes(d.type) ? getOptionLabel(d, d.correct_answer) : escHtml(d.correct_answer)}</span></p>\` : ''}
+            \${(!d.is_correct && !isDontKnow && !isPending && !isGraded) ? \`<p>正確答案：<span class="text-green-600 font-medium">\${['choice','true_false'].includes(d.type) ? getOptionLabel(d, d.correct_answer) : escHtml(d.correct_answer)}</span></p>\` : ''}
             \${isDontKnow ? \`<p>正確答案：<span class="text-green-600 font-medium">\${['choice','true_false'].includes(d.type) ? getOptionLabel(d, d.correct_answer) : escHtml(d.correct_answer)}</span></p><p class="text-orange-500 text-xs mt-1">📌 此題已標記為需加強，出題時將優先複習</p>\` : ''}
             \${isPending ? '<p class="text-blue-500 text-xs mt-1">📋 此題為寫作/口說題，將由老師批改後更新分數</p>' : ''}
+            \${isGraded ? \`<div class="mt-2 bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-1">
+              <p class="text-amber-800 font-medium text-xs">📝 老師批改結果</p>
+              <p class="text-amber-700">得分：<span class="font-bold">\${d.rubric_score||0}</span> / <span class="text-gray-500">\${d.score_earned||0}</span> 分</p>
+              \${d.reviewer_notes ? \`<p class="text-gray-700 mt-1">評語：\${escHtml(d.reviewer_notes)}</p>\` : ''}
+            </div>\` : ''}
             \${d.explanation ? \`<p class="text-gray-500 mt-2 bg-gray-50 p-2 rounded">💡 \${escHtml(d.explanation)}</p>\` : ''}
           </div>
         </div>\`;
@@ -707,6 +716,7 @@ body{font-family:'Noto Sans TC',sans-serif;}
       <button class="tab-btn px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30 text-indigo-200" onclick="switchTab('exams',this)">試卷管理</button>
       <button class="tab-btn px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30 text-indigo-200" onclick="switchTab('stats',this)">成績統計</button>
       <button class="tab-btn px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30 text-indigo-200" onclick="switchTab('ml',this)">🧠 ML 分析</button>
+      <button class="tab-btn px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30 text-indigo-200" onclick="switchTab('grading',this)">✍️ 作文批改</button>
     </div>
   </div>
 </header>
@@ -726,7 +736,7 @@ body{font-family:'Noto Sans TC',sans-serif;}
         <option value="bctest">國中教育會考</option>
         <option value="gept_elementary">全民英檢初級</option>
       </select>
-      <select id="filter-subject" onchange="loadQuestions()"class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
+      <select id="filter-subject" onchange="onFilterSubjectChange()" class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
         <option value="">全部科目</option>
       </select>
       <select id="filter-type" onchange="loadQuestions()" class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
@@ -734,6 +744,7 @@ body{font-family:'Noto Sans TC',sans-serif;}
         <option value="true_false">是非題</option>
         <option value="choice">選擇題</option>
         <option value="fill">填空題</option>
+        <option value="writing">寫作</option>
       </select>
       <select id="filter-diff"onchange="loadQuestions()" class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
         <option value="">全部難度</option>
@@ -794,8 +805,8 @@ body{font-family:'Noto Sans TC',sans-serif;}
           <label class="block text-xs text-gray-500 mb-1">學段</label>
           <select id="ml-grade" class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
             <option value="">全部</option>
-            <option value="junior_high">升國中（資優班）</option>
             <option value="elementary_6">國小六年級</option>
+            <option value="junior_high">升國中（資優班）</option>
             <option value="grade_7">國一（七年級）</option>
             <option value="grade_8">國二（八年級）</option>
             <option value="grade_9">國三（九年級）</option>
@@ -822,8 +833,8 @@ body{font-family:'Noto Sans TC',sans-serif;}
           <label class="block text-xs text-gray-500 mb-1">學段</label>
           <select id="cal-grade" class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
             <option value="">全部</option>
-            <option value="junior_high">升國中（資優班）</option>
             <option value="elementary_6">國小六年級</option>
+            <option value="junior_high">升國中（資優班）</option>
             <option value="grade_7">國一（七年級）</option>
             <option value="grade_8">國二（八年級）</option>
             <option value="grade_9">國三（九年級）</option>
@@ -862,6 +873,34 @@ body{font-family:'Noto Sans TC',sans-serif;}
       <div id="ability-result"></div>
     </div>
   </div>
+
+  <!-- 作文批改 -->
+  <div id="tab-grading" class="hidden">
+    <div class="flex gap-3 mb-5 flex-wrap items-end">
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">選擇考卷</label>
+        <select id="grading-exam-select" onchange="loadPendingGrading()" class="border border-gray-300 rounded-lg px-3 py-2 text-sm w-64">
+          <option value="">-- 選擇考卷 --</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">題型篩選</label>
+        <select id="grading-type-filter" onchange="loadPendingGrading()" class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
+          <option value="writing">✍️ 寫作</option>
+        </select>
+      </div>
+      <div class="flex gap-2">
+        <button id="grading-status-pending" onclick="setGradingStatus('pending')"
+          class="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white transition-colors">⏳ 待批改</button>
+        <button id="grading-status-graded" onclick="setGradingStatus('graded')"
+          class="px-4 py-2 rounded-lg text-sm font-medium bg-white border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors">✅ 已批改</button>
+      </div>
+      <button onclick="loadPendingGrading()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors">重新整理</button>
+    </div>
+    <div id="grading-list">
+      <div class="text-center py-12 text-gray-400">請先選擇考卷</div>
+    </div>
+  </div>
 </main>
 
 <!-- 題目新增/編輯 Modal -->
@@ -873,8 +912,8 @@ body{font-family:'Noto Sans TC',sans-serif;}
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">學段 *</label>
           <select id="q-grade-level" onchange="onGradeLevelChange()" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" required>
-            <option value="junior_high">升國中（資優班）</option>
             <option value="elementary_6">國小六年級</option>
+            <option value="junior_high">升國中（資優班）</option>
             <option value="grade_7">國一（七年級）</option>
             <option value="grade_8">國二（八年級）</option>
             <option value="grade_9">國三（九年級）</option>
@@ -896,8 +935,8 @@ body{font-family:'Noto Sans TC',sans-serif;}
               <option value="listening" class="listen-auto" hidden disabled>聽力題（自動）</option>
               <option value="cloze" class="gept-only">段落填空</option>
               <option value="reading" class="gept-only">閱讀理解</option>
-              <option value="writing" class="gept-only">寫作</option>
-              <option value="speaking" class="gept-only">口說</option>
+              <option value="writing" class="essay-grade">寫作</option>
+              <option value="speaking" class="essay-grade">口說</option>
             </select>
           </div>
           <div>
@@ -1078,7 +1117,7 @@ body{font-family:'Noto Sans TC',sans-serif;}
           </div>
           <div>
             <label class="block text-xs text-gray-500 mb-1">科目</label>
-            <select id="rand-subject" class="border border-gray-300 rounded px-2 py-1 text-sm">
+            <select id="rand-subject" onchange="onRandSubjectChange()" class="border border-gray-300 rounded px-2 py-1 text-sm">
               <option value="">全部</option>
             </select>
           </div>
@@ -1089,6 +1128,7 @@ body{font-family:'Noto Sans TC',sans-serif;}
               <option value="true_false">是非題</option>
               <option value="choice">選擇題</option>
               <option value="fill">填空題</option>
+              <option value="writing">寫作</option>
             </select>
           </div>
           <div>
@@ -1158,8 +1198,8 @@ function uniqueQuestionIds(ids) {
 // 正規化題目內容（去除 LaTeX、符號、空白，轉小寫）供內容比對去重
 function normalizeQContent(s) {
   return String(s || '')
-    .replace(/\$+/g, '')
-    .replace(/\\[a-zA-Z]+/g, '')
+    .replace(/\\$+/g, '')
+    .replace(/\\\\[a-zA-Z]+/g, '')
     .replace(/[^\u4e00-\u9fffa-z0-9]+/gi, '')
     .toLowerCase()
     .trim();
@@ -1170,11 +1210,12 @@ async function init() {
   // 初始化時，依預設學段（junior_high）分別載入各科目下拉
   await Promise.all([
     loadSubjectsInto('q-subject',      'junior_high'),
-    loadSubjectsInto('filter-subject', ''),
+    loadSubjectsInto('filter-subject', 'junior_high'),
     loadSubjectsInto('eq-subject',     ''),
     loadSubjectsInto('rand-subject',   ''),
   ]);
   loadQuestions();
+  loadGradingExamList();
 }
 
 // 依學段載入科目選項到指定 select 元素
@@ -1189,10 +1230,21 @@ async function loadSubjectsInto(selectId, grade_level) {
   el.innerHTML = firstOpt + list.map(s => \`<option value="\${s.id}" data-code="\${s.code || ''}">\${s.name}</option>\`).join('');
 }
 
-// 題庫篩選：學段變更 → 重新載入科目下拉並刷新題目列表
+// 題庫篩選：學段變更 → 重設科目選擇、重新載入科目下拉並刷新題目列表
 async function onFilterGradeChange() {
   const grade = document.getElementById('filter-grade').value;
+  document.getElementById('filter-subject').value = '';
   await loadSubjectsInto('filter-subject', grade);
+  onFilterSubjectChange();
+}
+
+// 題庫篩選：科目變更 → 若為作文科目自動切換題型
+function onFilterSubjectChange() {
+  const sel = document.getElementById('filter-subject');
+  const code = sel.options[sel.selectedIndex]?.dataset?.code || '';
+  if (code.startsWith('ESSAY')) {
+    document.getElementById('filter-type').value = 'writing';
+  }
   loadQuestions();
 }
 
@@ -1205,15 +1257,47 @@ function onSubjectChange() {
   const grade = document.getElementById('q-grade-level').value;
   const isGept = grade === 'gept_elementary';
   const isListeningSubject = subjectCode.includes('LISTEN') && !subjectCode.startsWith('GEPT');
+  const isEssaySubject = subjectCode.startsWith('ESSAY');
 
   // 將「是否為聽力科目」標記到表單上，供 toggleOptions() 使用
   document.getElementById('question-modal').dataset.isListeningSubject = isListeningSubject ? '1' : '';
 
-  // 更新 GEPT 題型（段落填空/閱讀理解/寫作/口說）可見性
+  if (isEssaySubject) {
+    // 作文科目：僅顯示「寫作」選項，隱藏所有其他題型
+    Array.from(qType.options).forEach(opt => {
+      const isWriting = opt.value === 'writing';
+      opt.hidden = !isWriting;
+      opt.disabled = !isWriting;
+    });
+    qType.value = 'writing';
+    toggleOptions();
+    return;
+  }
+
+  // 非作文科目：還原所有選項的可見性再依規則篩選
+  Array.from(qType.options).forEach(opt => {
+    if (!opt.classList.contains('gept-only') && !opt.classList.contains('essay-grade') &&
+        opt.value !== 'listening') {
+      opt.hidden = false;
+      opt.disabled = false;
+    }
+  });
+
+  // 更新 GEPT 題型（段落填空/閱讀理解）可見性
   Array.from(qType.options).forEach(opt => {
     if (opt.classList.contains('gept-only')) {
       opt.hidden = !isGept;
       opt.disabled = !isGept;
+    }
+  });
+
+  // 更新寫作/口說題型可見性（限：國小六年級、國一～國三、國中教育會考）
+  const essayGrades = ['elementary_6','grade_7','grade_8','grade_9','bctest'];
+  const isEssayGrade = essayGrades.includes(grade);
+  Array.from(qType.options).forEach(opt => {
+    if (opt.classList.contains('essay-grade')) {
+      opt.hidden = !isEssayGrade;
+      opt.disabled = !isEssayGrade;
     }
   });
 
@@ -1229,9 +1313,14 @@ function onSubjectChange() {
     qType.value = 'choice';
   }
 
-  // 若目前是 GEPT 題型但學段已不是 GEPT → 重置
-  const geptTypes = ['cloze','reading','writing','speaking'];
+  // 若目前是 GEPT 專屬題型但學段已不是 GEPT → 重置
+  const geptTypes = ['cloze','reading'];
   if (!isGept && geptTypes.includes(qType.value)) {
+    qType.value = 'choice';
+  }
+
+  // 若目前是寫作/口說但學段不在允許清單 → 重置
+  if (!isEssayGrade && ['writing','speaking'].includes(qType.value)) {
     qType.value = 'choice';
   }
 
@@ -1257,6 +1346,16 @@ async function onEqGradeChange() {
 async function onRandGradeChange() {
   const grade = document.getElementById('rand-grade').value;
   await loadSubjectsInto('rand-subject', grade);
+  onRandSubjectChange();
+}
+
+// 隨機抽題：科目變更 → 若為作文科目自動切換題型
+function onRandSubjectChange() {
+  const sel = document.getElementById('rand-subject');
+  const code = sel.options[sel.selectedIndex]?.dataset?.code || '';
+  if (code.startsWith('ESSAY')) {
+    document.getElementById('rand-type').value = 'writing';
+  }
 }
 
 // ── Tab Switching ─────────────────────────────────────────────────────────
@@ -1445,6 +1544,237 @@ async function loadStudentAbility() {
   \`;
 }
 
+// ── 作文批改 ──────────────────────────────────────────────────────────────
+let gradingStatus = 'pending';
+
+function setGradingStatus(s) {
+  gradingStatus = s;
+  document.getElementById('grading-status-pending').className =
+    'px-4 py-2 rounded-lg text-sm font-medium transition-colors ' +
+    (s === 'pending' ? 'bg-indigo-600 text-white' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-50');
+  document.getElementById('grading-status-graded').className =
+    'px-4 py-2 rounded-lg text-sm font-medium transition-colors ' +
+    (s === 'graded' ? 'bg-emerald-600 text-white' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-50');
+  loadPendingGrading();
+}
+
+async function loadGradingExamList() {
+  const sel = document.getElementById('grading-exam-select');
+  if (!sel) return;
+  const res = await fetch('/api/exams', { headers: { 'x-api-key': apiKey() } });
+  if (!res.ok) return;
+  const exams = await res.json();
+  const essayExams = exams.filter(e => e.writing_count > 0);
+  const opts = essayExams.map(e => \`<option value="\${e.id}">\${escHtml(e.title)}（含 \${e.writing_count} 題寫作）</option>\`).join('');
+  sel.innerHTML = '<option value="">-- 選擇考卷 --</option>' + (opts || '<option disabled>（目前沒有含作文的考卷）</option>');
+}
+
+async function loadPendingGrading() {
+  const examId = document.getElementById('grading-exam-select').value;
+  const type   = document.getElementById('grading-type-filter').value;
+  const el     = document.getElementById('grading-list');
+  if (!examId) { el.innerHTML = '<div class="text-center py-12 text-gray-400">請先選擇考卷</div>'; return; }
+  el.innerHTML = '<div class="text-center py-8 text-gray-400">載入中...</div>';
+  const params = new URLSearchParams({ status: gradingStatus });
+  if (type) params.set('type', type);
+  const res = await fetch(\`/api/exams/\${examId}/pending-grading?\` + params, { headers: { 'x-api-key': apiKey() } });
+  if (!res.ok) { el.innerHTML = '<div class="text-center py-8 text-red-400">載入失敗</div>'; return; }
+  const rows = await res.json();
+  const isGradedView = gradingStatus === 'graded';
+  if (!rows.length) {
+    const msg = isGradedView ? '尚無已批改的作答記錄' : '目前沒有待批改的作答！';
+    const icon = isGradedView ? '📭' : '🎉';
+    el.innerHTML = \`<div class="bg-green-50 border border-green-200 rounded-xl p-8 text-center text-green-700"><div class="text-3xl mb-2">\${icon}</div><div class="font-medium">\${msg}</div></div>\`;
+    return;
+  }
+  const typeLabel = { writing: '✍️ 寫作', speaking: '🎤 口說' };
+  el.innerHTML = \`<div class="text-sm text-gray-500 mb-3">共 \${rows.length} 筆\${isGradedView ? '已批改' : '待批改'}</div>\` +
+    rows.map(r => {
+      const audioHtml = r.audio_answer_url
+        ? \`<div class="mt-2"><audio controls class="w-full" src="\${escHtml(r.audio_answer_url)}"></audio></div>\`
+        : '';
+      // AI 建議區塊（若已有 ai_score 則展開顯示）
+      const aiHtml = \`
+        <div id="ai-suggestion-\${r.id}" class="\${r.ai_score != null ? '' : 'hidden'} mt-3 bg-yellow-50 border border-yellow-300 rounded-lg p-3 text-sm">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-yellow-700 font-semibold">🤖 AI 建議分數：\${r.ai_score ?? '—'} / \${r.max_score} 分</span>
+            <button onclick="applyAiSuggestion(\${r.id})"
+              class="ml-auto text-xs px-3 py-1 bg-yellow-400 hover:bg-yellow-500 text-white rounded-lg font-medium transition-colors">
+              採用AI建議
+            </button>
+          </div>
+          <div id="ai-notes-text-\${r.id}" class="text-gray-700 whitespace-pre-wrap">\${escHtml(r.ai_notes || '')}</div>
+        </div>\`;
+      // 範文區塊
+      const essayHtml = \`
+        <div id="model-essay-block-\${r.id}" class="\${r.model_essay ? '' : 'hidden'} mt-3 bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm">
+          <div class="text-xs text-gray-500 font-medium mb-1">📝 AI 示範範文</div>
+          <div id="model-essay-text-\${r.id}" class="text-gray-800 whitespace-pre-wrap leading-relaxed">\${escHtml(r.model_essay || '')}</div>
+        </div>\`;
+      const gradedExtra = isGradedView ? \`
+        <div class="mt-3 bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm">
+          <span class="font-medium text-amber-800">已給分：\${r.rubric_score ?? '—'} / \${r.max_score} 分</span>
+          \${r.reviewer_notes ? \`<p class="text-gray-700 mt-1">評語：\${escHtml(r.reviewer_notes)}</p>\` : ''}
+        </div>
+        \${aiHtml}
+        \${essayHtml}
+        <div class="flex gap-3 items-end flex-wrap mt-3">
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">重新給分（0–\${r.max_score}）</label>
+            <input id="rubric-score-\${r.id}" type="number" min="0" max="\${r.max_score}" step="0.5" value="\${r.rubric_score ?? ''}"
+              class="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm">
+          </div>
+          <div class="flex-1">
+            <label class="block text-xs text-gray-500 mb-1">評語</label>
+            <input id="rubric-notes-\${r.id}" type="text" value="\${escHtml(r.reviewer_notes || '')}"
+              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+          </div>
+          <button onclick="submitGrade(\${r.id}, \${r.max_score})"
+            class="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium transition-colors">
+            修改批改
+          </button>
+        </div>\`
+        : \`\${aiHtml}
+        \${essayHtml}
+        <div class="flex gap-2 flex-wrap mt-3 mb-1 items-center">
+          <select id="ai-provider-\${r.id}"
+            class="border border-gray-300 rounded-lg px-2 py-2 text-sm bg-white">
+            <option value="gemini">Gemini</option>
+            <option value="openai">OpenAI</option>
+            <option value="claude">Claude</option>
+          </select>
+          <button id="ai-grade-btn-\${r.id}" onclick="aiGrade(\${r.id}, \${r.max_score})"
+            class="px-4 py-2 bg-yellow-400 hover:bg-yellow-500 text-white rounded-lg text-sm font-medium transition-colors">
+            🤖 AI 初步批改
+          </button>
+          <button id="model-essay-btn-\${r.id}" onclick="genModelEssay(\${r.question_id}, \${r.id})"
+            class="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-sm font-medium transition-colors">
+            📝 產生範文
+          </button>
+        </div>
+        <div class="flex gap-3 items-end flex-wrap mt-3">
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">給分（0–\${r.max_score}）</label>
+            <input id="rubric-score-\${r.id}" type="number" min="0" max="\${r.max_score}" step="0.5"
+              class="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm" placeholder="分數">
+          </div>
+          <div class="flex-1">
+            <label class="block text-xs text-gray-500 mb-1">評語（選填）</label>
+            <input id="rubric-notes-\${r.id}" type="text"
+              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" placeholder="填寫批改意見">
+          </div>
+          <button onclick="submitGrade(\${r.id}, \${r.max_score})"
+            class="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition-colors">
+            送出批改
+          </button>
+        </div>\`;
+      return \`
+    <div class="bg-white rounded-xl shadow p-5 mb-4" id="grading-card-\${r.id}">
+      <div class="flex items-center gap-3 mb-3 pb-3 border-b">
+        <span class="text-lg">\${typeLabel[r.type] || r.type}</span>
+        <span class="font-semibold text-gray-800">\${escHtml(r.student_name)}</span>
+        \${r.student_id ? \`<span class="text-xs text-gray-500">(\${escHtml(r.student_id)})</span>\` : ''}
+        <span class="ml-auto text-xs text-gray-400">\${r.submitted_at}</span>
+        <span class="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded">滿分 \${r.max_score} 分</span>
+      </div>
+      <div class="mb-3">
+        <div class="text-xs text-gray-500 mb-1 font-medium">題目 & 評分規準</div>
+        <div class="bg-gray-50 rounded-lg p-3 text-sm text-gray-800 whitespace-pre-wrap">\${escHtml(r.content)}</div>
+        \${r.answer ? \`<div class="mt-1 text-xs text-orange-600 bg-orange-50 rounded px-3 py-1.5">📋 評分規準：\${escHtml(r.answer)}</div>\` : ''}
+      </div>
+      <div class="mb-2">
+        <div class="text-xs text-gray-500 mb-1 font-medium">學生作答</div>
+        <div class="bg-blue-50 border border-blue-100 rounded-lg p-3 text-sm text-gray-800 whitespace-pre-wrap min-h-[60px]">\${escHtml(r.given_answer || '（無作答）')}</div>
+        \${audioHtml}
+      </div>
+      \${gradedExtra}
+    </div>
+  \`;
+    }).join('');
+}
+
+async function submitGrade(detailId, maxScore) {
+  const scoreEl = document.getElementById(\`rubric-score-\${detailId}\`);
+  const notesEl = document.getElementById(\`rubric-notes-\${detailId}\`);
+  const score = parseFloat(scoreEl.value);
+  if (isNaN(score) || score < 0 || score > maxScore) {
+    alert(\`請填寫 0 到 \${maxScore} 之間的分數\`); return;
+  }
+  const btn = scoreEl.closest('.bg-white').querySelector('button[onclick^="submitGrade"]');
+  btn.disabled = true; btn.textContent = '送出中...';
+  const res = await fetch(\`/api/answer-details/\${detailId}/grade\`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey() },
+    body: JSON.stringify({ rubric_score: score, reviewer_notes: notesEl.value.trim() || null })
+  });
+  if (!res.ok) {
+    btn.disabled = false; btn.textContent = '送出批改';
+    const j = await res.json(); alert('批改失敗：' + (j.error || '未知錯誤')); return;
+  }
+  const card = document.getElementById(\`grading-card-\${detailId}\`);
+  card.innerHTML = \`<div class="flex items-center gap-3 text-emerald-700 py-2"><span class="text-xl">✅</span><span class="font-medium">已完成批改，給分：\${score} 分</span></div>\`;
+  setTimeout(() => { card.remove(); const list = document.getElementById('grading-list'); if (!list.querySelector('[id^="grading-card-"]')) loadPendingGrading(); }, 1500);
+}
+
+async function aiGrade(detailId, maxScore) {
+  const btn = document.getElementById(\`ai-grade-btn-\${detailId}\`);
+  if (!btn) return;
+  const providerEl = document.getElementById(\`ai-provider-\${detailId}\`);
+  const provider = providerEl ? providerEl.value : 'gemini';
+  btn.disabled = true; btn.textContent = '🤖 AI 批改中...';
+  const res = await fetch(\`/api/answer-details/\${detailId}/ai-grade\`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey() },
+    body: JSON.stringify({ provider })
+  });
+  const j = await res.json();
+  if (!res.ok) {
+    btn.disabled = false; btn.textContent = '🤖 AI 初步批改';
+    alert('AI 批改失敗：' + (j.error || '未知錯誤')); return;
+  }
+  btn.disabled = false; btn.textContent = '🤖 重新AI批改';
+  const block = document.getElementById(\`ai-suggestion-\${detailId}\`);
+  if (block) {
+    block.classList.remove('hidden');
+    block.querySelector(\`#ai-suggestion-\${detailId} .font-semibold\`) && (block.querySelector('.font-semibold').textContent = \`🤖 AI 建議分數：\${j.ai_score} / \${maxScore} 分\`);
+    const notesEl = document.getElementById(\`ai-notes-text-\${detailId}\`);
+    if (notesEl) notesEl.textContent = j.ai_notes || '';
+    // Update data attributes for applyAiSuggestion
+    block.dataset.aiScore = j.ai_score;
+    block.dataset.aiNotes = j.ai_notes || '';
+  }
+}
+
+function applyAiSuggestion(detailId) {
+  const block = document.getElementById(\`ai-suggestion-\${detailId}\`);
+  if (!block) return;
+  const scoreEl = document.getElementById(\`rubric-score-\${detailId}\`);
+  const notesEl = document.getElementById(\`rubric-notes-\${detailId}\`);
+  const aiScore = block.dataset.aiScore ?? block.querySelector('.font-semibold')?.textContent.match(/[\d.]+/)?.[0];
+  const aiNotes = block.dataset.aiNotes ?? document.getElementById(\`ai-notes-text-\${detailId}\`)?.textContent;
+  if (scoreEl && aiScore != null) scoreEl.value = aiScore;
+  if (notesEl && aiNotes) notesEl.value = aiNotes;
+}
+
+async function genModelEssay(questionId, detailId) {
+  const btn = document.getElementById(\`model-essay-btn-\${detailId}\`);
+  if (!btn) return;
+  const providerEl = document.getElementById(\`ai-provider-\${detailId}\`);
+  const provider = providerEl ? providerEl.value : 'gemini';
+  btn.disabled = true; btn.textContent = '📝 產生中...';
+  const res = await fetch(\`/api/questions/\${questionId}/model-essay\`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey() },
+    body: JSON.stringify({ provider })
+  });
+  const j = await res.json();
+  btn.disabled = false; btn.textContent = '📝 重新產生範文';
+  if (!res.ok) { alert('範文產生失敗：' + (j.error || '未知錯誤')); return; }
+  const block = document.getElementById(\`model-essay-block-\${detailId}\`);
+  const textEl = document.getElementById(\`model-essay-text-\${detailId}\`);
+  if (block && textEl) { textEl.textContent = j.model_essay || ''; block.classList.remove('hidden'); }
+}
+
 // ── Questions ─────────────────────────────────────────────────────────────
 async function loadQuestions(page = 1) {
   currentPage = page;
@@ -1466,7 +1796,7 @@ async function loadQuestions(page = 1) {
   const res = await fetch('/api/questions?' + params);
   const data = await res.json();
   const typeLabel = {choice:'選擇題',true_false:'是非題',fill:'填空題',listening:'聽力題',cloze:'段落填空',reading:'閱讀理解',writing:'寫作',speaking:'口說'};
-  const gradeLabel = {junior_high:'升國中',elementary_6:'國小六年級',grade_7:'國一',grade_8:'國二',grade_9:'國三',bctest:'會考'};
+  const gradeLabel = {junior_high:'升國中',elementary_6:'國小六年級',grade_7:'國一',grade_8:'國二',grade_9:'國三',bctest:'會考',gept_elementary:'全民英檢初級'};
   const gradeCls = {elementary_6:'bg-green-50 text-green-700',junior_high:'bg-blue-50 text-blue-700',grade_7:'bg-purple-50 text-purple-700',grade_8:'bg-orange-50 text-orange-700',grade_9:'bg-red-50 text-red-700',bctest:'bg-yellow-50 text-yellow-700'};
   const tbody = data.data.map(q => \`
     <tr class="hover:bg-gray-50 border-b border-gray-100 \${q.is_archived ? 'opacity-50' : ''}">
@@ -2110,8 +2440,8 @@ const aiGenerateHtml = `<!DOCTYPE html>
       <div>
         <label class="block text-sm font-medium text-gray-600 mb-1">學段</label>
         <select id="grade_level" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" onchange="loadSubjects()">
-          <option value="junior_high">升國中（資優班）</option>
           <option value="elementary_6">國小六年級</option>
+          <option value="junior_high">升國中（資優班）</option>
           <option value="grade_7">國一（七年級）</option>
           <option value="grade_8">國二（八年級）</option>
           <option value="grade_9">國三（九年級）</option>
@@ -2122,7 +2452,7 @@ const aiGenerateHtml = `<!DOCTYPE html>
 
       <div>
         <label class="block text-sm font-medium text-gray-600 mb-1">科目</label>
-        <select id="subject_id" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"></select>
+        <select id="subject_id" onchange="onAiSubjectChange()" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"></select>
       </div>
 
       <div>
@@ -2131,6 +2461,7 @@ const aiGenerateHtml = `<!DOCTYPE html>
           <option value="choice">選擇題</option>
           <option value="true_false">是非題</option>
           <option value="fill">填空題</option>
+          <option value="writing">寫作</option>
         </select>
       </div>
 
@@ -2186,12 +2517,22 @@ const aiGenerateHtml = `<!DOCTYPE html>
 <script>
 let generatedQuestions = [];
 
+// 科目變更 → 若為作文科目自動切換題型為寫作
+function onAiSubjectChange() {
+  const sel = document.getElementById('subject_id');
+  const code = sel.options[sel.selectedIndex]?.dataset?.code || '';
+  if (code.startsWith('ESSAY')) {
+    document.getElementById('type').value = 'writing';
+  }
+}
+
 async function loadSubjects() {
   const grade = document.getElementById('grade_level').value;
   const res = await fetch('/api/subjects?grade_level=' + grade);
   const subjects = await res.json();
   const sel = document.getElementById('subject_id');
-  sel.innerHTML = subjects.map(s => \`<option value="\${s.id}">\${s.name}</option>\`).join('');
+  sel.innerHTML = subjects.map(s => \`<option value="\${s.id}" data-code="\${s.code || ''}">\${s.name}</option>\`).join('');
+  onAiSubjectChange();
 }
 
 async function generate() {

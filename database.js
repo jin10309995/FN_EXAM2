@@ -138,6 +138,20 @@ if (!cols.includes('grade_level')) {
   if (!adCols.includes('audio_answer_url')) {
     db.exec(`ALTER TABLE answer_details ADD COLUMN audio_answer_url TEXT`);
   }
+  if (!adCols.includes('ai_score')) {
+    db.exec(`ALTER TABLE answer_details ADD COLUMN ai_score REAL`);
+  }
+  if (!adCols.includes('ai_notes')) {
+    db.exec(`ALTER TABLE answer_details ADD COLUMN ai_notes TEXT`);
+  }
+}
+
+// Migration: add model_essay to questions
+{
+  const qCols = db.prepare('PRAGMA table_info(questions)').all().map(c => c.name);
+  if (!qCols.includes('model_essay')) {
+    db.exec(`ALTER TABLE questions ADD COLUMN model_essay TEXT`);
+  }
 }
 
 // Migration: add grade_level column to subjects if not exists
@@ -285,6 +299,7 @@ const insertSubject = db.prepare(`INSERT OR IGNORE INTO subjects (name, code, gr
   ['自然',     'NAT',   'elementary_6'],
   ['數學',     'MATH_E','elementary_6'],
   ['英文聽力', 'ENG_LISTEN_6', 'elementary_6'],
+  ['作文',     'ESSAY_6', 'elementary_6'],
   // 國一（七年級）科目
   ['國文', 'CHN_7',  'grade_7'],
   ['數學', 'MATH_7', 'grade_7'],
@@ -292,6 +307,7 @@ const insertSubject = db.prepare(`INSERT OR IGNORE INTO subjects (name, code, gr
   ['自然', 'SCI_7',  'grade_7'],
   ['社會', 'SOC_7',  'grade_7'],
   ['英文聽力', 'ENG_LISTEN_7', 'grade_7'],
+  ['作文', 'ESSAY_7', 'grade_7'],
   // 國二（八年級）科目
   ['國文', 'CHN_8',  'grade_8'],
   ['數學', 'MATH_8', 'grade_8'],
@@ -299,6 +315,7 @@ const insertSubject = db.prepare(`INSERT OR IGNORE INTO subjects (name, code, gr
   ['自然', 'SCI_8',  'grade_8'],
   ['社會', 'SOC_8',  'grade_8'],
   ['英文聽力', 'ENG_LISTEN_8', 'grade_8'],
+  ['作文', 'ESSAY_8', 'grade_8'],
   // 國三（九年級）科目
   ['國文', 'CHN_9',  'grade_9'],
   ['數學', 'MATH_9', 'grade_9'],
@@ -306,6 +323,7 @@ const insertSubject = db.prepare(`INSERT OR IGNORE INTO subjects (name, code, gr
   ['自然', 'SCI_9',  'grade_9'],
   ['社會', 'SOC_9',  'grade_9'],
   ['英文聽力', 'ENG_LISTEN_9', 'grade_9'],
+  ['作文', 'ESSAY_9', 'grade_9'],
   // 國中教育會考科目
   ['國文', 'CHN_BC', 'bctest'],
   ['數學', 'MATH_BC','bctest'],
@@ -313,6 +331,7 @@ const insertSubject = db.prepare(`INSERT OR IGNORE INTO subjects (name, code, gr
   ['自然', 'SCI_BC', 'bctest'],
   ['社會', 'SOC_BC', 'bctest'],
   ['英文聽力', 'ENG_LISTEN_BC', 'bctest'],
+  ['作文', 'ESSAY_BC', 'bctest'],
   // 全民英檢初級（GEPT Elementary）科目
   ['聽力', 'GEPT_LISTEN', 'gept_elementary'],
   ['閱讀', 'GEPT_READ',   'gept_elementary'],

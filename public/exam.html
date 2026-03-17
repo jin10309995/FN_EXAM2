@@ -329,8 +329,9 @@ function renderWriting(q, idx) {
   return `<div class="space-y-2">
     <p class="text-sm text-orange-600 bg-orange-50 border border-orange-200 rounded p-2">✍️ 寫作題：請在下方文字框作答，完成後由老師批改。</p>
     <textarea id="fill-${idx}" rows="6" placeholder="請在此寫下您的答案…"
-      oninput="setAnswer(${idx}, this.value)"
+      oninput="setAnswer(${idx}, this.value); document.getElementById('wc-${idx}').textContent=this.value.replace(/\\s/g,'').length+'字'"
       class="w-full border-2 border-gray-300 focus:border-indigo-500 rounded-lg px-3 py-2 outline-none transition-colors resize-y text-sm"></textarea>
+    <div class="text-right text-xs text-gray-400">已輸入 <span id="wc-${idx}">0</span></div>
   </div>` + renderDontKnow(idx);
 }
 

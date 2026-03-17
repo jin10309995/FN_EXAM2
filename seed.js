@@ -147,34 +147,45 @@ const sciQuestions = [
 ];
 
 const insert = db.prepare(`
-  INSERT INTO questions (subject_id,type,difficulty,content,option_a,option_b,option_c,option_d,answer,explanation,source,tags)
+  INSERT OR IGNORE INTO questions (subject_id,type,difficulty,content,option_a,option_b,option_c,option_d,answer,explanation,source,tags)
   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
 `);
 
-let count = 0;
+let insertedCount = 0;
+let skippedCount = 0;
 [...mathQuestions, ...sciQuestions].forEach(q => {
   // Skip the duplicate entry added by mistake
   if (q.explanation && q.explanation.includes('等一下')) return;
-  insert.run(
+  const result = insert.run(
     q.subject_id, q.type, q.difficulty, q.content,
     q.option_a||null, q.option_b||null, q.option_c||null, q.option_d||null,
     q.answer, q.explanation||null, q.source||null, q.tags||null
   );
-  count++;
+  if (result.changes > 0) insertedCount++;
+  else skippedCount++;
 });
 
-// Create a sample exam
-const examResult = db.prepare(`INSERT INTO exams (title, description, duration_min, status) VALUES (?,?,?,?)`).run(
-  '數理資優班入學考試（範例）',
-  '本試卷包含數學與自然科學題目，適合國小升國中數理資優班甄選使用。',
-  90,
-  'active'
-);
+const sampleExamTitle = '數理資優班入學考試（範例）';
+const sampleExamDescription = '本試卷包含數學與自然科學題目，適合國小升國中數理資優班甄選使用。';
+
+let sampleExam = db.prepare(`SELECT id FROM exams WHERE title = ?`).get(sampleExamTitle);
+if (!sampleExam) {
+  const examResult = db.prepare(`INSERT INTO exams (title, description, duration_min, status) VALUES (?,?,?,?)`).run(
+    sampleExamTitle,
+    sampleExamDescription,
+    90,
+    'active'
+  );
+  sampleExam = { id: examResult.lastInsertRowid };
+}
 
 const mathIds = db.prepare('SELECT id FROM questions WHERE subject_id = 1 LIMIT 5').all();
 const sciIds  = db.prepare('SELECT id FROM questions WHERE subject_id = 2 LIMIT 5').all();
-const insEQ = db.prepare(`INSERT INTO exam_questions (exam_id,question_id,sort_order,score) VALUES (?,?,?,?)`);
-[...mathIds, ...sciIds].forEach((q, i) => insEQ.run(examResult.lastInsertRowid, q.id, i + 1, 10));
+const existingQuestionCount = db.prepare(`SELECT COUNT(*) as cnt FROM exam_questions WHERE exam_id = ?`).get(sampleExam.id).cnt;
+if (existingQuestionCount === 0) {
+  const insEQ = db.prepare(`INSERT INTO exam_questions (exam_id,question_id,sort_order,score) VALUES (?,?,?,?)`);
+  [...mathIds, ...sciIds].forEach((q, i) => insEQ.run(sampleExam.id, q.id, i + 1, 10));
+}
 
-console.log(`[OK] 成功植入 ${count} 道題目`);
-console.log(`[OK] 建立範例試卷（ID: ${examResult.lastInsertRowid}）`);
+console.log(`[OK] 新增 ${insertedCount} 道題目，略過 ${skippedCount} 道重複題目`);
+console.log(`[OK] 範例試卷可用（ID: ${sampleExam.id}）`);

@@ -7,7 +7,7 @@ const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const db = require('./database');
-const { generateQuestions } = require('./llm');
+const { generateQuestions, gradeEssay, generateModelEssay } = require('./llm');
 
 const app = express();
 
@@ -295,8 +295,11 @@ app.delete('/api/questions/:id', requireAdmin, (req, res) => {
 app.get('/api/exams', requireAdmin, (req, res) => {
   const rows = db.prepare(`
     SELECT e.*, COUNT(eq.id) as question_count,
-           SUM(eq.score) as total_score
-    FROM exams e LEFT JOIN exam_questions eq ON eq.exam_id = e.id
+           SUM(eq.score) as total_score,
+           COUNT(CASE WHEN q.type IN ('writing','speaking') THEN 1 END) as writing_count
+    FROM exams e
+    LEFT JOIN exam_questions eq ON eq.exam_id = e.id
+    LEFT JOIN questions q ON q.id = eq.question_id
     GROUP BY e.id ORDER BY e.id DESC
   `).all();
   res.json(rows);
@@ -403,13 +406,29 @@ app.post('/api/generate/questions', requireAdmin, async (req, res) => {
     const subject = db.prepare('SELECT * FROM subjects WHERE id = ?').get(subject_id);
     if (!subject) return res.status(404).json({ error: '找不到指定科目' });
 
-    const typeLabel = { choice: '單選題（A/B/C/D）', true_false: '是非題（T/F）', fill: '填空題', calculation: '計算題', listening: '英語聽力選擇題', cloze: 'GEPT 段落填空', reading: 'GEPT 閱讀理解', writing: 'GEPT 寫作', speaking: 'GEPT 口說' }[type] || type;
+    const isEssaySubject = subject.code.startsWith('ESSAY');
+    const typeLabel = { choice: '單選題（A/B/C/D）', true_false: '是非題（T/F）', fill: '填空題', calculation: '計算題', listening: '英語聽力選擇題', cloze: 'GEPT 段落填空', reading: 'GEPT 閱讀理解', writing: isEssaySubject ? '國文作文' : 'GEPT 寫作', speaking: 'GEPT 口說' }[type] || type;
     const gradeLabelMap = {elementary_6:'國小六年級',junior_high:'升國中（資優班）',grade_7:'國一（七年級）',grade_8:'國二（八年級）',grade_9:'國三（九年級）',bctest:'國中教育會考',gept_elementary:'全民英檢初級'};
     const gradeLabel = gradeLabelMap[grade_level] || '升國中（資優班）';
-    const userPrompt = `請出 ${count} 題「${subject.name}」${gradeLabel}的${typeLabel}，難度 ${difficulty}/5（1 最易，5 最難）。
+
+    let userPrompt;
+    if (isEssaySubject && type === 'writing') {
+      userPrompt = `請出 ${count} 道適合${gradeLabel}學生的國文作文題目，難度 ${difficulty}/5（1 最易，5 最難）。
+題目必須是繁體中文，請勿要求學生用英文寫作。
+每道題目請包含：
+- content: 作文題目說明（繁體中文，明確描述寫作主題、體裁（記敘文/說明文/議論文等）、字數要求與需涵蓋的要點）
+- answer: 評分規準（例如：「至少200字，主題明確，結構完整，語言流暢」）
+- explanation: 出題說明（說明此題的評量目標與批改重點）
+- tags: 作文類型標籤，逗號分隔（例如：「記敘文,寫景,抒情」）
+- option_a, option_b, option_c, option_d: 一律填 null（作文題無選項）
+${hint ? `補充要求：${hint}` : ''}
+請確保題目主題多元（生活經驗、自然景物、人物描寫、議題思考等），符合${gradeLabel}的學習程度與語文能力。`;
+    } else {
+      userPrompt = `請出 ${count} 題「${subject.name}」${gradeLabel}的${typeLabel}，難度 ${difficulty}/5（1 最易，5 最難）。
 請使用自然、可直接顯示的繁體中文純文字，不要使用 LaTeX、不要使用 Markdown 數學語法，也不要使用特殊數學排版符號。
 若有數學條件，請改寫成一般文字，例如「A不等於0」、「三位數 ABC」、「x平方」。
 ${hint ? `補充要求：${hint}` : ''}`;
+    }
 
     const questions = dedupeQuestionsByContent(await generateQuestions(provider, userPrompt));
 
@@ -568,10 +587,13 @@ async function archiveAndReplace() {
 
     // 嘗試 LLM 自動生成替換題
     const newDiff = Math.min(q.difficulty + 1, 5);
-    const typeLabel = { choice: '單選題（A/B/C/D）', true_false: '是非題（T/F）', fill: '填空題', calculation: '計算題', listening: '英語聽力選擇題', cloze: 'GEPT 段落填空', reading: 'GEPT 閱讀理解', writing: 'GEPT 寫作', speaking: 'GEPT 口說' }[q.type] || q.type;
+    const isEssayQ = (q.subject_code || '').startsWith('ESSAY');
+    const typeLabel = { choice: '單選題（A/B/C/D）', true_false: '是非題（T/F）', fill: '填空題', calculation: '計算題', listening: '英語聽力選擇題', cloze: 'GEPT 段落填空', reading: 'GEPT 閱讀理解', writing: isEssayQ ? '國文作文' : 'GEPT 寫作', speaking: 'GEPT 口說' }[q.type] || q.type;
     const gradeLabelMap2 = {elementary_6:'國小六年級',junior_high:'升國中（資優班）',grade_7:'國一（七年級）',grade_8:'國二（八年級）',grade_9:'國三（九年級）',bctest:'國中教育會考',gept_elementary:'全民英檢初級'};
     const gradeLabel = gradeLabelMap2[q.grade_level] || '升國中（資優班）';
-    const prompt = `請出 1 題「${q.subject_name}」${gradeLabel}的${typeLabel}，難度 ${newDiff}/5（1 最易，5 最難）。請勿與以下題目重複：${q.content}`;
+    const prompt = isEssayQ && q.type === 'writing'
+      ? `請出 1 道適合${gradeLabel}學生的國文作文題目，難度 ${newDiff}/5。使用繁體中文，勿要求英文寫作。請勿與以下題目重複：${q.content}`
+      : `請出 1 題「${q.subject_name}」${gradeLabel}的${typeLabel}，難度 ${newDiff}/5（1 最易，5 最難）。請勿與以下題目重複：${q.content}`;
 
     try {
       const generated = await generateQuestions(provider, prompt);
@@ -623,29 +645,39 @@ app.get('/api/submissions/:id/analysis', (req, res) => {
   `).all(req.params.id);
 
   const pct = sub.total_score > 0 ? Math.round(sub.score * 100 / sub.total_score) : 0;
+  const gradedDetails = details.filter(d => d.grading_status !== 'pending');
+  const pendingDetails = details.filter(d => d.grading_status === 'pending');
 
   // 各科目統計
   const bySubject = {};
-  details.forEach(d => {
-    if (!bySubject[d.subject_name]) bySubject[d.subject_name] = { correct: 0, wrong: 0, score: 0, total: 0 };
+  gradedDetails.forEach(d => {
+    if (!bySubject[d.subject_name]) bySubject[d.subject_name] = { correct: 0, wrong: 0, score: 0, total: 0, pending: 0 };
     bySubject[d.subject_name].total++;
     if (d.is_correct) bySubject[d.subject_name].correct++;
     else bySubject[d.subject_name].wrong++;
     bySubject[d.subject_name].score += d.score_earned;
   });
+  pendingDetails.forEach(d => {
+    if (!bySubject[d.subject_name]) bySubject[d.subject_name] = { correct: 0, wrong: 0, score: 0, total: 0, pending: 0 };
+    bySubject[d.subject_name].pending++;
+  });
 
   // 各難度統計
   const byDifficulty = {};
-  for (let i = 1; i <= 5; i++) byDifficulty[i] = { correct: 0, wrong: 0, total: 0 };
-  details.forEach(d => {
+  for (let i = 1; i <= 5; i++) byDifficulty[i] = { correct: 0, wrong: 0, total: 0, pending: 0 };
+  gradedDetails.forEach(d => {
     const diff = d.difficulty || 1;
     byDifficulty[diff].total++;
     if (d.is_correct) byDifficulty[diff].correct++;
     else byDifficulty[diff].wrong++;
   });
+  pendingDetails.forEach(d => {
+    const diff = d.difficulty || 1;
+    byDifficulty[diff].pending++;
+  });
 
   // 弱點題目（答錯的題目）
-  const weakQuestions = details.filter(d => !d.is_correct).map(d => ({
+  const weakQuestions = gradedDetails.filter(d => !d.is_correct).map(d => ({
     content: d.content, type: d.type, difficulty: d.difficulty,
     subject_name: d.subject_name, correct_answer: d.correct_answer,
     given_answer: d.given_answer, explanation: d.explanation,
@@ -666,10 +698,11 @@ app.get('/api/submissions/:id/analysis', (req, res) => {
   if (pct >= 90) suggestions.push('表現優異！可嘗試更高難度的挑戰題。');
   else if (pct >= 70) suggestions.push('整體表現良好，繼續加油！');
   else suggestions.push('建議重新複習答錯的題目，加強基礎概念。');
+  if (pendingDetails.length) suggestions.push(`另有 ${pendingDetails.length} 題寫作或口說題待老師批改，分析結果暫未納入這些題目。`);
 
   // Rasch ability estimation per subject
   const abilityBySubject = {};
-  details.forEach(d => {
+  gradedDetails.forEach(d => {
     if (!abilityBySubject[d.subject_name]) abilityBySubject[d.subject_name] = [];
     abilityBySubject[d.subject_name].push({ difficulty: d.difficulty, is_correct: d.is_correct });
   });
@@ -679,7 +712,7 @@ app.get('/api/submissions/:id/analysis', (req, res) => {
     sample_size: responses.length,
     pass_rate: Math.round(responses.filter(r => r.is_correct).length / responses.length * 100)
   }));
-  const overall_ability = estimateAbilityRasch(details.map(d => ({ difficulty: d.difficulty, is_correct: d.is_correct })));
+  const overall_ability = estimateAbilityRasch(gradedDetails.map(d => ({ difficulty: d.difficulty, is_correct: d.is_correct })));
 
   res.json({
     submission_id: sub.id,
@@ -691,8 +724,10 @@ app.get('/api/submissions/:id/analysis', (req, res) => {
     total_score: sub.total_score,
     percentage: pct,
     total_questions: details.length,
-    correct_count: details.filter(d => d.is_correct).length,
-    wrong_count: details.filter(d => !d.is_correct && d.given_answer !== '__dont_know__').length,
+    graded_questions: gradedDetails.length,
+    pending_count: pendingDetails.length,
+    correct_count: gradedDetails.filter(d => d.is_correct).length,
+    wrong_count: gradedDetails.filter(d => !d.is_correct && d.given_answer !== '__dont_know__').length,
     dont_know_count: details.filter(d => d.given_answer === '__dont_know__').length,
     by_subject: bySubject,
     by_difficulty: byDifficulty,
@@ -715,18 +750,23 @@ app.get('/api/exams/:id/submissions', requireAdmin, (req, res) => {
 
 // GET answer_details pending manual grading for an exam
 app.get('/api/exams/:id/pending-grading', requireAdmin, (req, res) => {
+  const { type } = req.query;
+  const validType = ['writing', 'speaking'].includes(type) ? type : null;
+  const status = req.query.status === 'graded' ? 'graded' : 'pending';
   const rows = db.prepare(`
     SELECT ad.id, ad.submission_id, ad.question_id, ad.given_answer, ad.grading_status,
            ad.rubric_score, ad.reviewer_notes, ad.audio_answer_url,
-           q.content, q.type, q.answer, q.explanation, eq.score as max_score,
-           s.student_name, s.student_id
+           ad.ai_score, ad.ai_notes,
+           q.content, q.type, q.answer, q.explanation, q.model_essay, eq.score as max_score,
+           s.student_name, s.student_id, s.submitted_at
     FROM answer_details ad
     JOIN questions q ON q.id = ad.question_id
     JOIN exam_questions eq ON eq.question_id = ad.question_id AND eq.exam_id = ?
     JOIN submissions s ON s.id = ad.submission_id
-    WHERE s.exam_id = ? AND ad.grading_status = 'pending'
+    WHERE s.exam_id = ? AND ad.grading_status = ?
+      AND (? IS NULL OR q.type = ?)
     ORDER BY s.submitted_at DESC
-  `).all(req.params.id, req.params.id);
+  `).all(req.params.id, req.params.id, status, validType, validType);
   res.json(rows);
 });
 
@@ -739,14 +779,59 @@ app.put('/api/answer-details/:id/grade', requireAdmin, (req, res) => {
   const eq = db.prepare('SELECT score FROM exam_questions WHERE question_id = ? AND exam_id = (SELECT exam_id FROM submissions WHERE id = ?)').get(ad.question_id, ad.submission_id);
   const maxScore = eq ? eq.score : 0;
   const finalScore = Math.min(Math.max(parseFloat(rubric_score) || 0, 0), maxScore);
+  const nextIsCorrect = finalScore >= maxScore ? 1 : 0;
   db.transaction(() => {
+    const decCorrect = db.prepare(`UPDATE questions SET correct_count = CASE WHEN correct_count > 0 THEN correct_count - 1 ELSE 0 END WHERE id = ?`);
+    const decWrong = db.prepare(`UPDATE questions SET wrong_count = CASE WHEN wrong_count > 0 THEN wrong_count - 1 ELSE 0 END WHERE id = ?`);
+    const incCorrect = db.prepare(`UPDATE questions SET correct_count = correct_count + 1 WHERE id = ?`);
+    const incWrong = db.prepare(`UPDATE questions SET wrong_count = wrong_count + 1 WHERE id = ?`);
+    if (ad.grading_status === 'graded') {
+      if (ad.is_correct === 1) decCorrect.run(ad.question_id);
+      else if (ad.is_correct === 0) decWrong.run(ad.question_id);
+    }
     db.prepare(`UPDATE answer_details SET grading_status='graded', rubric_score=?, reviewer_notes=?, is_correct=?, score_earned=? WHERE id=?`)
-      .run(finalScore, reviewer_notes || null, finalScore >= maxScore ? 1 : 0, finalScore, req.params.id);
+      .run(finalScore, reviewer_notes || null, nextIsCorrect, finalScore, req.params.id);
+    if (nextIsCorrect === 1) incCorrect.run(ad.question_id);
+    else incWrong.run(ad.question_id);
     // Update submission score
     const totals = db.prepare(`SELECT SUM(COALESCE(rubric_score, score_earned)) as earned FROM answer_details WHERE submission_id=?`).get(ad.submission_id);
     db.prepare(`UPDATE submissions SET score=? WHERE id=?`).run(totals.earned || 0, ad.submission_id);
   })();
   res.json({ success: true, score_earned: finalScore });
+});
+
+// POST AI grade a writing answer_detail
+app.post('/api/answer-details/:id/ai-grade', requireAdmin, async (req, res) => {
+  const ad = db.prepare('SELECT * FROM answer_details WHERE id = ?').get(req.params.id);
+  if (!ad) return res.status(404).json({ error: '找不到作答明細' });
+  const q = db.prepare('SELECT * FROM questions WHERE id = ?').get(ad.question_id);
+  if (!q) return res.status(404).json({ error: '找不到題目' });
+  const eq = db.prepare('SELECT score FROM exam_questions WHERE question_id = ? AND exam_id = (SELECT exam_id FROM submissions WHERE id = ?)').get(ad.question_id, ad.submission_id);
+  const maxScore = eq ? eq.score : 10;
+  const validProviders = ['openai', 'gemini', 'claude'];
+  const provider = validProviders.includes(req.body?.provider) ? req.body.provider : (process.env.LLM_PROVIDER || 'gemini');
+  try {
+    const { score, notes } = await gradeEssay(provider, q.content, ad.given_answer || '', q.answer || '', maxScore);
+    db.prepare('UPDATE answer_details SET ai_score=?, ai_notes=? WHERE id=?').run(score, notes, req.params.id);
+    res.json({ success: true, ai_score: score, ai_notes: notes });
+  } catch (e) {
+    res.status(500).json({ error: 'AI 批改失敗：' + e.message });
+  }
+});
+
+// POST AI generate model essay for a question
+app.post('/api/questions/:id/model-essay', requireAdmin, async (req, res) => {
+  const q = db.prepare('SELECT * FROM questions WHERE id = ?').get(req.params.id);
+  if (!q) return res.status(404).json({ error: '找不到題目' });
+  const validProviders = ['openai', 'gemini', 'claude'];
+  const provider = validProviders.includes(req.body?.provider) ? req.body.provider : (process.env.LLM_PROVIDER || 'gemini');
+  try {
+    const essay = await generateModelEssay(provider, q.content, q.grade_level || 'grade_7');
+    db.prepare('UPDATE questions SET model_essay=? WHERE id=?').run(essay, req.params.id);
+    res.json({ success: true, model_essay: essay });
+  } catch (e) {
+    res.status(500).json({ error: 'AI 範文產生失敗：' + e.message });
+  }
 });
 
 // GET statistics for an exam

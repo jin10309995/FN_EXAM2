@@ -110,4 +110,116 @@ function parseJsonResponse(raw) {
   throw new Error('LLM 回傳格式不符預期，未找到題目陣列');
 }
 
-module.exports = { generateQuestions };
+// ────────────────────────────────────────────────────────────────────────────
+// AI 作文批改
+// ────────────────────────────────────────────────────────────────────────────
+
+const GRADE_ESSAY_SYSTEM = `你是一位經驗豐富的國文／作文評審老師。
+請依據提供的評分標準，對學生的作文進行評分。
+請輸出 JSON 物件，格式如下：
+{
+  "score": <數字，0 到滿分之間，可為小數（精確到0.5分）>,
+  "notes": "<評語字串，繁體中文，100字以內，說明給分理由及改進建議>"
+}
+只輸出純 JSON 物件，不要有任何前後文說明。`;
+
+/**
+ * AI 批改作文
+ * @param {string} provider
+ * @param {string} questionContent - 作文題目
+ * @param {string} studentAnswer   - 學生作文
+ * @param {string} rubric          - 評分標準（存在 questions.answer 欄位）
+ * @param {number} maxScore        - 滿分
+ * @returns {Promise<{score:number, notes:string}>}
+ */
+async function gradeEssay(provider, questionContent, studentAnswer, rubric, maxScore) {
+  const userPrompt = `【作文題目】\n${questionContent}\n\n【評分標準】\n${rubric || '依文章立意、結構、語言表達整體評分'}\n\n【滿分】${maxScore} 分\n\n【學生作文】\n${studentAnswer}`;
+  let raw;
+  switch (provider) {
+    case 'openai':  raw = await callOpenAIText(GRADE_ESSAY_SYSTEM, userPrompt); break;
+    case 'gemini':  raw = await callGeminiText(GRADE_ESSAY_SYSTEM, userPrompt); break;
+    case 'claude':  raw = await callClaudeText(GRADE_ESSAY_SYSTEM, userPrompt); break;
+    default: throw new Error(`不支援的 LLM provider: ${provider}`);
+  }
+  let result;
+  try { result = JSON.parse(raw); } catch {
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (!m) throw new Error('AI 批改回傳格式錯誤');
+    result = JSON.parse(m[0]);
+  }
+  const score = Math.min(Math.max(parseFloat(result.score) || 0, 0), maxScore);
+  return { score, notes: String(result.notes || '') };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// AI 範文產生
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * AI 產生示範作文
+ * @param {string} provider
+ * @param {string} questionContent - 作文題目
+ * @param {string} gradeLevel      - 學段（elementary_6/grade_7/grade_8/grade_9/bctest）
+ * @returns {Promise<string>} 純文字範文
+ */
+async function generateModelEssay(provider, questionContent, gradeLevel) {
+  const levelMap = {
+    elementary_6: '國小六年級', grade_7: '國一（七年級）',
+    grade_8: '國二（八年級）', grade_9: '國三（九年級）', bctest: '國中會考'
+  };
+  const levelLabel = levelMap[gradeLevel] || '國中';
+  const systemPrompt = `你是一位優秀的國文老師，擅長寫作${levelLabel}程度的示範作文。請用流暢、自然的繁體中文寫出一篇高品質的示範作文，符合該學段學生應有的語言程度。直接輸出作文正文，不需要標題、說明文字或任何前後文。`;
+  const userPrompt = `請依照以下題目，寫一篇約 300~500 字的示範作文：\n\n${questionContent}`;
+  switch (provider) {
+    case 'openai':  return callOpenAIText(systemPrompt, userPrompt);
+    case 'gemini':  return callGeminiText(systemPrompt, userPrompt);
+    case 'claude':  return callClaudeText(systemPrompt, userPrompt);
+    default: throw new Error(`不支援的 LLM provider: ${provider}`);
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 通用純文字 LLM 呼叫（不強制 JSON 格式）
+// ────────────────────────────────────────────────────────────────────────────
+
+async function callOpenAIText(systemPrompt, userPrompt) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error('OPENAI_API_KEY 未設定');
+  const { OpenAI } = require('openai');
+  const client = new OpenAI({ apiKey });
+  const response = await client.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
+    temperature: 0.7
+  });
+  return response.choices[0].message.content;
+}
+
+async function callGeminiText(systemPrompt, userPrompt) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error('GEMINI_API_KEY 未設定');
+  const { GoogleGenerativeAI } = require('@google/generative-ai');
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({
+    model: 'gemini-2.5-flash',
+    generationConfig: { temperature: 0.7 }
+  });
+  const result = await model.generateContent(`${systemPrompt}\n\n${userPrompt}`);
+  return result.response.text();
+}
+
+async function callClaudeText(systemPrompt, userPrompt) {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY 未設定');
+  const Anthropic = require('@anthropic-ai/sdk');
+  const client = new Anthropic.default({ apiKey });
+  const message = await client.messages.create({
+    model: 'claude-3-5-haiku-20241022',
+    max_tokens: 2048,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userPrompt }]
+  });
+  return message.content[0].text;
+}
+
+module.exports = { generateQuestions, gradeEssay, generateModelEssay };
