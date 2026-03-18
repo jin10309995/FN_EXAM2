@@ -398,7 +398,7 @@ app.post('/api/generate/questions', requireAdmin, async (req, res) => {
     const {
       provider = process.env.LLM_PROVIDER || 'openai',
       subject_id, type = 'choice', difficulty = 3,
-      count = 5, grade_level = 'junior_high', hint = ''
+      count = 5, grade_level = 'junior_high', hint = '', essay_topic = ''
     } = req.body;
 
     if (!subject_id) return res.status(400).json({ error: '必須指定科目 subject_id' });
@@ -415,14 +415,14 @@ app.post('/api/generate/questions', requireAdmin, async (req, res) => {
     if (isEssaySubject && type === 'writing') {
       userPrompt = `請出 ${count} 道適合${gradeLabel}學生的國文作文題目，難度 ${difficulty}/5（1 最易，5 最難）。
 題目必須是繁體中文，請勿要求學生用英文寫作。
-每道題目請包含：
+${essay_topic ? `作文主題限定為：「${essay_topic}」，所有題目必須圍繞此主題設計，不得跑題。\n` : ''}每道題目請包含：
 - content: 作文題目說明（繁體中文，明確描述寫作主題、體裁（記敘文/說明文/議論文等）、字數要求與需涵蓋的要點）
 - answer: 評分規準（例如：「至少200字，主題明確，結構完整，語言流暢」）
 - explanation: 出題說明（說明此題的評量目標與批改重點）
 - tags: 作文類型標籤，逗號分隔（例如：「記敘文,寫景,抒情」）
 - option_a, option_b, option_c, option_d: 一律填 null（作文題無選項）
 ${hint ? `補充要求：${hint}` : ''}
-請確保題目主題多元（生活經驗、自然景物、人物描寫、議題思考等），符合${gradeLabel}的學習程度與語文能力。`;
+${essay_topic ? '' : '請確保題目主題多元（生活經驗、自然景物、人物描寫、議題思考等），'}符合${gradeLabel}的學習程度與語文能力。`;
     } else {
       userPrompt = `請出 ${count} 題「${subject.name}」${gradeLabel}的${typeLabel}，難度 ${difficulty}/5（1 最易，5 最難）。
 請使用自然、可直接顯示的繁體中文純文字，不要使用 LaTeX、不要使用 Markdown 數學語法，也不要使用特殊數學排版符號。
@@ -757,6 +757,7 @@ app.get('/api/exams/:id/pending-grading', requireAdmin, (req, res) => {
     SELECT ad.id, ad.submission_id, ad.question_id, ad.given_answer, ad.grading_status,
            ad.rubric_score, ad.reviewer_notes, ad.audio_answer_url,
            ad.ai_score, ad.ai_notes,
+           ad.dim_content, ad.dim_structure, ad.dim_language, ad.dim_norms,
            q.content, q.type, q.answer, q.explanation, q.model_essay, eq.score as max_score,
            s.student_name, s.student_id, s.submitted_at
     FROM answer_details ad
@@ -772,7 +773,7 @@ app.get('/api/exams/:id/pending-grading', requireAdmin, (req, res) => {
 
 // PUT grade a specific answer_detail (manual grading for writing/speaking)
 app.put('/api/answer-details/:id/grade', requireAdmin, (req, res) => {
-  const { rubric_score, reviewer_notes } = req.body;
+  const { rubric_score, reviewer_notes, dim_content, dim_structure, dim_language, dim_norms } = req.body;
   if (rubric_score === undefined || rubric_score === null) return res.status(400).json({ error: '缺少 rubric_score' });
   const ad = db.prepare('SELECT * FROM answer_details WHERE id = ?').get(req.params.id);
   if (!ad) return res.status(404).json({ error: '找不到作答明細' });
@@ -789,8 +790,11 @@ app.put('/api/answer-details/:id/grade', requireAdmin, (req, res) => {
       if (ad.is_correct === 1) decCorrect.run(ad.question_id);
       else if (ad.is_correct === 0) decWrong.run(ad.question_id);
     }
-    db.prepare(`UPDATE answer_details SET grading_status='graded', rubric_score=?, reviewer_notes=?, is_correct=?, score_earned=? WHERE id=?`)
-      .run(finalScore, reviewer_notes || null, nextIsCorrect, finalScore, req.params.id);
+    db.prepare(`UPDATE answer_details SET grading_status='graded', rubric_score=?, reviewer_notes=?, is_correct=?, score_earned=?,
+      dim_content=?, dim_structure=?, dim_language=?, dim_norms=? WHERE id=?`)
+      .run(finalScore, reviewer_notes || null, nextIsCorrect, finalScore,
+        dim_content ?? null, dim_structure ?? null, dim_language ?? null, dim_norms ?? null,
+        req.params.id);
     if (nextIsCorrect === 1) incCorrect.run(ad.question_id);
     else incWrong.run(ad.question_id);
     // Update submission score
@@ -811,9 +815,10 @@ app.post('/api/answer-details/:id/ai-grade', requireAdmin, async (req, res) => {
   const validProviders = ['openai', 'gemini', 'claude'];
   const provider = validProviders.includes(req.body?.provider) ? req.body.provider : (process.env.LLM_PROVIDER || 'gemini');
   try {
-    const { score, notes } = await gradeEssay(provider, q.content, ad.given_answer || '', q.answer || '', maxScore);
-    db.prepare('UPDATE answer_details SET ai_score=?, ai_notes=? WHERE id=?').run(score, notes, req.params.id);
-    res.json({ success: true, ai_score: score, ai_notes: notes });
+    const { score, notes, dim_content, dim_structure, dim_language, dim_norms } = await gradeEssay(provider, q.content, ad.given_answer || '', q.answer || '', maxScore);
+    db.prepare('UPDATE answer_details SET ai_score=?, ai_notes=?, dim_content=?, dim_structure=?, dim_language=?, dim_norms=? WHERE id=?')
+      .run(score, notes, dim_content, dim_structure, dim_language, dim_norms, req.params.id);
+    res.json({ success: true, ai_score: score, ai_notes: notes, dim_content, dim_structure, dim_language, dim_norms });
   } catch (e) {
     res.status(500).json({ error: 'AI 批改失敗：' + e.message });
   }

@@ -144,6 +144,18 @@ if (!cols.includes('grade_level')) {
   if (!adCols.includes('ai_notes')) {
     db.exec(`ALTER TABLE answer_details ADD COLUMN ai_notes TEXT`);
   }
+  if (!adCols.includes('dim_content')) {
+    db.exec(`ALTER TABLE answer_details ADD COLUMN dim_content INTEGER`);
+  }
+  if (!adCols.includes('dim_structure')) {
+    db.exec(`ALTER TABLE answer_details ADD COLUMN dim_structure INTEGER`);
+  }
+  if (!adCols.includes('dim_language')) {
+    db.exec(`ALTER TABLE answer_details ADD COLUMN dim_language INTEGER`);
+  }
+  if (!adCols.includes('dim_norms')) {
+    db.exec(`ALTER TABLE answer_details ADD COLUMN dim_norms INTEGER`);
+  }
 }
 
 // Migration: add model_essay to questions

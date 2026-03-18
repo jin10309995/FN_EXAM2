@@ -957,6 +957,7 @@ body{font-family:'Noto Sans TC',sans-serif;}
             <option value="gemini" selected>Google Gemini</option>
             <option value="claude">Anthropic Claude</option>
           </select>
+          <input id="q-essay-topic" type="text" class="hidden border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white w-44" placeholder="作文主題（選填）">
           <span id="q-ai-generate-status" class="text-sm text-gray-500"></span>
         </div>
         <div>
@@ -1270,11 +1271,14 @@ function onSubjectChange() {
       opt.disabled = !isWriting;
     });
     qType.value = 'writing';
+    document.getElementById('q-essay-topic').classList.remove('hidden');
     toggleOptions();
     return;
   }
 
   // 非作文科目：還原所有選項的可見性再依規則篩選
+  document.getElementById('q-essay-topic').classList.add('hidden');
+  document.getElementById('q-essay-topic').value = '';
   Array.from(qType.options).forEach(opt => {
     if (!opt.classList.contains('gept-only') && !opt.classList.contains('essay-grade') &&
         opt.value !== 'listening') {
@@ -1594,8 +1598,18 @@ async function loadPendingGrading() {
         ? \`<div class="mt-2"><audio controls class="w-full" src="\${escHtml(r.audio_answer_url)}"></audio></div>\`
         : '';
       // AI 建議區塊（若已有 ai_score 則展開顯示）
+      const aiDimHtml = r.ai_score != null ? \`
+        <div class="grid grid-cols-4 gap-2 mt-2 text-xs text-center">
+          <div class="bg-white rounded border px-2 py-1"><div class="text-gray-500">內容主題</div><div class="font-bold text-indigo-700">\${r.dim_content ?? '—'}<span class="font-normal text-gray-400">/40</span></div></div>
+          <div class="bg-white rounded border px-2 py-1"><div class="text-gray-500">結構邏輯</div><div class="font-bold text-indigo-700">\${r.dim_structure ?? '—'}<span class="font-normal text-gray-400">/25</span></div></div>
+          <div class="bg-white rounded border px-2 py-1"><div class="text-gray-500">語言表達</div><div class="font-bold text-indigo-700">\${r.dim_language ?? '—'}<span class="font-normal text-gray-400">/25</span></div></div>
+          <div class="bg-white rounded border px-2 py-1"><div class="text-gray-500">書寫規範</div><div class="font-bold text-indigo-700">\${r.dim_norms ?? '—'}<span class="font-normal text-gray-400">/10</span></div></div>
+        </div>\` : '';
       const aiHtml = \`
-        <div id="ai-suggestion-\${r.id}" class="\${r.ai_score != null ? '' : 'hidden'} mt-3 bg-yellow-50 border border-yellow-300 rounded-lg p-3 text-sm">
+        <div id="ai-suggestion-\${r.id}" class="\${r.ai_score != null ? '' : 'hidden'} mt-3 bg-yellow-50 border border-yellow-300 rounded-lg p-3 text-sm"
+          data-ai-score="\${r.ai_score ?? ''}" data-ai-notes="\${escHtml(r.ai_notes || '')}"
+          data-dim-content="\${r.dim_content ?? ''}" data-dim-structure="\${r.dim_structure ?? ''}"
+          data-dim-language="\${r.dim_language ?? ''}" data-dim-norms="\${r.dim_norms ?? ''}">
           <div class="flex items-center gap-2 mb-1">
             <span class="text-yellow-700 font-semibold">🤖 AI 建議分數：\${r.ai_score ?? '—'} / \${r.max_score} 分</span>
             <button onclick="applyAiSuggestion(\${r.id})"
@@ -1603,7 +1617,40 @@ async function loadPendingGrading() {
               採用AI建議
             </button>
           </div>
-          <div id="ai-notes-text-\${r.id}" class="text-gray-700 whitespace-pre-wrap">\${escHtml(r.ai_notes || '')}</div>
+          \${aiDimHtml}
+          <div id="ai-notes-text-\${r.id}" class="text-gray-700 whitespace-pre-wrap mt-2">\${escHtml(r.ai_notes || '')}</div>
+        </div>\`;
+      // 四維度輸入函式（給分表單共用）
+      const dimInputs = (isGraded) => \`
+        <div class="mt-3 bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+          <div class="text-xs font-medium text-indigo-700 mb-2">📊 四維度評分（合計 = 百分制總分）</div>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+            <div>
+              <label class="block text-gray-500 mb-1">內容主題（/40）</label>
+              <input id="dim-content-\${r.id}" type="number" min="0" max="40" step="1" value="\${isGraded ? (r.dim_content ?? '') : ''}"
+                oninput="recalcScore(\${r.id}, \${r.max_score})"
+                class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm" placeholder="0~40">
+            </div>
+            <div>
+              <label class="block text-gray-500 mb-1">結構邏輯（/25）</label>
+              <input id="dim-structure-\${r.id}" type="number" min="0" max="25" step="1" value="\${isGraded ? (r.dim_structure ?? '') : ''}"
+                oninput="recalcScore(\${r.id}, \${r.max_score})"
+                class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm" placeholder="0~25">
+            </div>
+            <div>
+              <label class="block text-gray-500 mb-1">語言表達（/25）</label>
+              <input id="dim-language-\${r.id}" type="number" min="0" max="25" step="1" value="\${isGraded ? (r.dim_language ?? '') : ''}"
+                oninput="recalcScore(\${r.id}, \${r.max_score})"
+                class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm" placeholder="0~25">
+            </div>
+            <div>
+              <label class="block text-gray-500 mb-1">書寫規範（/10）</label>
+              <input id="dim-norms-\${r.id}" type="number" min="0" max="10" step="1" value="\${isGraded ? (r.dim_norms ?? '') : ''}"
+                oninput="recalcScore(\${r.id}, \${r.max_score})"
+                class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm" placeholder="0~10">
+            </div>
+          </div>
+          <div class="mt-2 text-xs text-gray-500">百分制合計：<span id="dim-total-\${r.id}" class="font-bold text-indigo-700">\${isGraded && r.dim_content != null ? (r.dim_content + r.dim_structure + r.dim_language + r.dim_norms) : '—'}</span> / 100　→　換算得分：<span id="dim-converted-\${r.id}" class="font-bold text-indigo-700">\${isGraded && r.dim_content != null ? (Math.round((r.dim_content + r.dim_structure + r.dim_language + r.dim_norms) / 100 * r.max_score * 2) / 2) : '—'}</span> / \${r.max_score}</div>
         </div>\`;
       // 範文區塊
       const essayHtml = \`
@@ -1618,6 +1665,7 @@ async function loadPendingGrading() {
         </div>
         \${aiHtml}
         \${essayHtml}
+        \${dimInputs(true)}
         <div class="flex gap-3 items-end flex-wrap mt-3">
           <div>
             <label class="block text-xs text-gray-500 mb-1">重新給分（0–\${r.max_score}）</label>
@@ -1652,6 +1700,7 @@ async function loadPendingGrading() {
             📝 產生範文
           </button>
         </div>
+        \${dimInputs(false)}
         <div class="flex gap-3 items-end flex-wrap mt-3">
           <div>
             <label class="block text-xs text-gray-500 mb-1">給分（0–\${r.max_score}）</label>
@@ -1693,6 +1742,22 @@ async function loadPendingGrading() {
     }).join('');
 }
 
+// 重新計算四維度合計並換算得分
+function recalcScore(detailId, maxScore) {
+  const c = parseInt(document.getElementById(\`dim-content-\${detailId}\`)?.value)   || 0;
+  const s = parseInt(document.getElementById(\`dim-structure-\${detailId}\`)?.value) || 0;
+  const l = parseInt(document.getElementById(\`dim-language-\${detailId}\`)?.value)  || 0;
+  const n = parseInt(document.getElementById(\`dim-norms-\${detailId}\`)?.value)     || 0;
+  const total = c + s + l + n;
+  const converted = Math.round(total / 100 * maxScore * 2) / 2;
+  const totalEl     = document.getElementById(\`dim-total-\${detailId}\`);
+  const convertedEl = document.getElementById(\`dim-converted-\${detailId}\`);
+  const scoreEl     = document.getElementById(\`rubric-score-\${detailId}\`);
+  if (totalEl)     totalEl.textContent = total;
+  if (convertedEl) convertedEl.textContent = converted;
+  if (scoreEl)     scoreEl.value = converted;
+}
+
 async function submitGrade(detailId, maxScore) {
   const scoreEl = document.getElementById(\`rubric-score-\${detailId}\`);
   const notesEl = document.getElementById(\`rubric-notes-\${detailId}\`);
@@ -1702,10 +1767,15 @@ async function submitGrade(detailId, maxScore) {
   }
   const btn = scoreEl.closest('.bg-white').querySelector('button[onclick^="submitGrade"]');
   btn.disabled = true; btn.textContent = '送出中...';
+  const dimContent   = parseInt(document.getElementById(\`dim-content-\${detailId}\`)?.value)   || null;
+  const dimStructure = parseInt(document.getElementById(\`dim-structure-\${detailId}\`)?.value) || null;
+  const dimLanguage  = parseInt(document.getElementById(\`dim-language-\${detailId}\`)?.value)  || null;
+  const dimNorms     = parseInt(document.getElementById(\`dim-norms-\${detailId}\`)?.value)     || null;
   const res = await fetch(\`/api/answer-details/\${detailId}/grade\`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey() },
-    body: JSON.stringify({ rubric_score: score, reviewer_notes: notesEl.value.trim() || null })
+    body: JSON.stringify({ rubric_score: score, reviewer_notes: notesEl.value.trim() || null,
+      dim_content: dimContent, dim_structure: dimStructure, dim_language: dimLanguage, dim_norms: dimNorms })
   });
   if (!res.ok) {
     btn.disabled = false; btn.textContent = '送出批改';
@@ -1736,12 +1806,24 @@ async function aiGrade(detailId, maxScore) {
   const block = document.getElementById(\`ai-suggestion-\${detailId}\`);
   if (block) {
     block.classList.remove('hidden');
-    block.querySelector(\`#ai-suggestion-\${detailId} .font-semibold\`) && (block.querySelector('.font-semibold').textContent = \`🤖 AI 建議分數：\${j.ai_score} / \${maxScore} 分\`);
-    const notesEl = document.getElementById(\`ai-notes-text-\${detailId}\`);
-    if (notesEl) notesEl.textContent = j.ai_notes || '';
-    // Update data attributes for applyAiSuggestion
     block.dataset.aiScore = j.ai_score;
     block.dataset.aiNotes = j.ai_notes || '';
+    block.dataset.dimContent   = j.dim_content   ?? '';
+    block.dataset.dimStructure = j.dim_structure ?? '';
+    block.dataset.dimLanguage  = j.dim_language  ?? '';
+    block.dataset.dimNorms     = j.dim_norms     ?? '';
+    const scoreEl = block.querySelector('.font-semibold');
+    if (scoreEl) scoreEl.textContent = \`🤖 AI 建議分數：\${j.ai_score} / \${maxScore} 分\`;
+    const notesEl = document.getElementById(\`ai-notes-text-\${detailId}\`);
+    if (notesEl) notesEl.textContent = j.ai_notes || '';
+    // 更新四維度顯示
+    const dimGrid = block.querySelector('.grid');
+    if (dimGrid) {
+      const cells = dimGrid.querySelectorAll('.font-bold');
+      const dims = [j.dim_content, j.dim_structure, j.dim_language, j.dim_norms];
+      const maxes = [40, 25, 25, 10];
+      cells.forEach((el, i) => { el.innerHTML = (dims[i] ?? '—') + \`<span class="font-normal text-gray-400">/\${maxes[i]}</span>\`; });
+    }
   }
 }
 
@@ -1754,6 +1836,15 @@ function applyAiSuggestion(detailId) {
   const aiNotes = block.dataset.aiNotes ?? document.getElementById(\`ai-notes-text-\${detailId}\`)?.textContent;
   if (scoreEl && aiScore != null) scoreEl.value = aiScore;
   if (notesEl && aiNotes) notesEl.value = aiNotes;
+  // 填入四維度分數
+  const fields = ['dim-content', 'dim-structure', 'dim-language', 'dim-norms'];
+  const dataKeys = ['dimContent', 'dimStructure', 'dimLanguage', 'dimNorms'];
+  fields.forEach((f, i) => {
+    const el = document.getElementById(\`\${f}-\${detailId}\`);
+    if (el && block.dataset[dataKeys[i]] !== '') el.value = block.dataset[dataKeys[i]] ?? '';
+  });
+  // 觸發重新計算
+  recalcScore(detailId, parseFloat(scoreEl?.max || 0));
 }
 
 async function genModelEssay(questionId, detailId) {
@@ -1837,6 +1928,7 @@ function openQuestionModal(data = null) {
   document.getElementById('q-ai-generate-status').textContent = '';
   document.getElementById('q-ai-generate-btn').disabled = false;
   document.getElementById('q-ai-generate-btn').classList.remove('opacity-60', 'cursor-not-allowed');
+  document.getElementById('q-essay-topic').value = '';
   const gradeLevel = data?.grade_level || 'junior_high';
   document.getElementById('q-grade-level').value  = gradeLevel;
   // 先填入其他欄位
@@ -1970,7 +2062,8 @@ async function generateQuestionDraft() {
         type: body.type,
         difficulty: body.difficulty,
         grade_level: body.grade_level,
-        count: 1
+        count: 1,
+        essay_topic: document.getElementById('q-essay-topic').value.trim()
       })
     });
     const data = await res.json();
