@@ -5,7 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "db:backup": "node scripts/backup-db.js",
+    "test:smoke": "node scripts/smoke-test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",

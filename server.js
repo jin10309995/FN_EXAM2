@@ -2,6 +2,7 @@ require('dotenv').config({ quiet: true });
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const helmet = require('helmet');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
@@ -66,6 +67,14 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE']
 }));
 app.use(express.json({ limit: '100kb' })); // 限制請求體大小
+app.use((req, res, next) => {
+  if (req.path.endsWith('.html')) {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+  }
+  next();
+});
 app.use(express.static(path.join(__dirname, 'public')));
 
 // 提交作答專用速率限制：每個 IP 每 15 分鐘最多 10 次
@@ -119,14 +128,141 @@ app.get('/api/subjects', (req, res) => {
 
 // ─── 管理員金鑰驗證中介層 ────────────────────────────────────────────────────
 function requireAdmin(req, res, next) {
+  const auth = getAdminAuth(req);
+  if (auth.ok) {
+    req.admin = auth.admin;
+    req.adminSession = auth.session;
+    return next();
+  }
   const adminKey = process.env.ADMIN_API_KEY;
   if (adminKey) {
-    const key = req.headers['x-api-key'];
-    if (!key || key !== adminKey)
-      return res.status(401).json({ error: '未授權，需要管理員金鑰' });
+    const key = req.headers['x-api-key'] || (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    if (key && key === adminKey) {
+      req.admin = { id: 0, username: 'api-key-admin', display_name: 'API Key Admin', role: 'super_admin' };
+      return next();
+    }
+    return res.status(401).json({ error: '未授權，需要登入或管理員金鑰' });
   }
   next();
 }
+
+function parseCookies(req) {
+  const raw = req.headers.cookie || '';
+  return raw.split(';').reduce((acc, part) => {
+    const idx = part.indexOf('=');
+    if (idx === -1) return acc;
+    const key = part.slice(0, idx).trim();
+    const value = decodeURIComponent(part.slice(idx + 1).trim());
+    if (key) acc[key] = value;
+    return acc;
+  }, {});
+}
+
+function hashAdminSessionToken(token) {
+  return crypto.createHash('sha256').update(String(token || '')).digest('hex');
+}
+
+function setAdminSessionCookie(res, token, expiresAt) {
+  const expires = new Date(expiresAt).toUTCString();
+  res.setHeader('Set-Cookie', `admin_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Expires=${expires}`);
+}
+
+function clearAdminSessionCookie(res) {
+  res.setHeader('Set-Cookie', 'admin_session=; Path=/; HttpOnly; SameSite=Lax; Expires=Thu, 01 Jan 1970 00:00:00 GMT');
+}
+
+function getAdminAuth(req) {
+  const bearer = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+  const cookieToken = parseCookies(req).admin_session || '';
+  const token = bearer || cookieToken;
+  if (!token) return { ok: false };
+  const session = db.prepare(`
+    SELECT s.id, s.admin_id, s.expires_at, a.username, a.display_name, a.role, a.is_active
+    FROM admin_sessions s
+    JOIN admins a ON a.id = s.admin_id
+    WHERE s.token_hash = ?
+  `).get(hashAdminSessionToken(token));
+  if (!session) return { ok: false };
+  if (!session.is_active) return { ok: false };
+  if (new Date(session.expires_at) <= new Date()) {
+    db.prepare(`DELETE FROM admin_sessions WHERE id = ?`).run(session.id);
+    return { ok: false };
+  }
+  db.prepare(`UPDATE admin_sessions SET last_seen_at = datetime('now','localtime') WHERE id = ?`).run(session.id);
+  return {
+    ok: true,
+    session: { id: session.id, expires_at: session.expires_at },
+    admin: {
+      id: session.admin_id,
+      username: session.username,
+      display_name: session.display_name,
+      role: session.role
+    }
+  };
+}
+
+function hashPassword(password) {
+  return crypto.createHash('sha256').update(String(password || '')).digest('hex');
+}
+
+app.post('/api/admin/session', (req, res) => {
+  const auth = getAdminAuth(req);
+  if (auth.ok) {
+    return res.json({ success: true, auth_mode: 'session', admin: auth.admin, expires_at: auth.session.expires_at });
+  }
+  const adminKey = process.env.ADMIN_API_KEY;
+  const key = req.headers['x-api-key'] || req.body?.api_key;
+  if (!adminKey || key === adminKey) {
+    return res.json({
+      success: true,
+      auth_mode: adminKey ? 'api_key' : 'open',
+      admin: { username: 'api-key-admin', display_name: 'API Key Admin', role: 'super_admin' }
+    });
+  }
+  return res.status(401).json({ error: '尚未登入' });
+});
+
+app.post('/api/admin/login', (req, res) => {
+  const { username, password } = req.body || {};
+  if (!username || !password) return res.status(400).json({ error: '請提供帳號與密碼' });
+  const admin = db.prepare(`
+    SELECT id, username, password_hash, display_name, role, is_active
+    FROM admins
+    WHERE username = ?
+  `).get(String(username).trim());
+  if (!admin || !admin.is_active || admin.password_hash !== hashPassword(password)) {
+    return res.status(401).json({ error: '帳號或密碼錯誤' });
+  }
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 12).toISOString();
+  db.prepare(`
+    INSERT INTO admin_sessions (admin_id, token_hash, expires_at)
+    VALUES (?, ?, ?)
+  `).run(admin.id, hashAdminSessionToken(token), expiresAt);
+  setAdminSessionCookie(res, token, expiresAt);
+  res.json({
+    success: true,
+    admin: {
+      id: admin.id,
+      username: admin.username,
+      display_name: admin.display_name,
+      role: admin.role
+    },
+    expires_at: expiresAt
+  });
+});
+
+app.get('/api/admin/me', requireAdmin, (req, res) => {
+  res.json({ success: true, admin: req.admin || null, session: req.adminSession || null });
+});
+
+app.post('/api/admin/logout', requireAdmin, (req, res) => {
+  if (req.adminSession?.id) {
+    db.prepare(`DELETE FROM admin_sessions WHERE id = ?`).run(req.adminSession.id);
+  }
+  clearAdminSessionCookie(res);
+  res.json({ success: true });
+});
 
 function normalizeExamQuestionIds(questionIds) {
   const seen = new Set();
@@ -155,6 +291,331 @@ function normalizeQuestionContent(content) {
     .toLowerCase()
     .trim();
 }
+
+function buildContentHash(content) {
+  return crypto.createHash('sha1').update(normalizeQuestionContent(content)).digest('hex');
+}
+
+function datetimeNow() {
+  return new Date().toISOString();
+}
+
+function getAdminActor(req) {
+  return req?.admin?.username || req.headers['x-admin-user'] || 'admin';
+}
+
+function parseJsonArray(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function serializeFlags(flags) {
+  return JSON.stringify(Array.from(new Set((flags || []).filter(Boolean))));
+}
+
+function validateQuestionShape(question) {
+  const q = question || {};
+  const errors = [];
+  if (!q.subject_id) errors.push('缺少 subject_id');
+  if (!q.type) errors.push('缺少題型');
+  if (!q.difficulty || Number(q.difficulty) < 1 || Number(q.difficulty) > 5) errors.push('難度需介於 1 到 5');
+  if (!q.content || !String(q.content).trim()) errors.push('題目內容不可空白');
+  const nonAutoTypes = ['writing', 'speaking'];
+  if (!nonAutoTypes.includes(q.type) && !String(q.answer || '').trim()) errors.push('答案不可空白');
+  if (['choice', 'listening', 'reading'].includes(q.type)) {
+    const opts = [q.option_a, q.option_b, q.option_c, q.option_d].filter(v => String(v || '').trim());
+    if (opts.length < 2) errors.push('選擇型題目至少需要 2 個選項');
+  }
+  if (q.type === 'true_false') {
+    const normalized = String(q.answer || '').trim().toUpperCase();
+    if (!['T', 'F', 'TRUE', 'FALSE'].includes(normalized)) errors.push('是非題答案需為 T 或 F');
+  }
+  if (q.type === 'listening' && !String(q.audio_transcript || '').trim()) errors.push('聽力題需提供逐字稿');
+  return errors;
+}
+
+function findDuplicateQuestion({ content, grade_level, excludeId = null }) {
+  const normalizedContent = normalizeQuestionContent(content);
+  if (!normalizedContent) return null;
+  const hash = buildContentHash(content);
+  const params = [hash, normalizedContent];
+  let sql = `
+    SELECT q.id, q.grade_level, q.content, q.is_archived
+    FROM questions q
+    WHERE (q.content_hash = ? OR q.normalized_content = ?)
+  `;
+  if (grade_level) {
+    sql += ` AND q.grade_level = ?`;
+    params.push(grade_level);
+  }
+  if (excludeId) {
+    sql += ` AND q.id <> ?`;
+    params.push(excludeId);
+  }
+  sql += ` ORDER BY q.is_archived, q.id LIMIT 1`;
+  return db.prepare(sql).get(...params) || null;
+}
+
+function computeQuestionGovernance(question, statsOverride = null) {
+  const q = question || {};
+  const totalAttempts = statsOverride?.total_attempts ?? ((q.correct_count || 0) + (q.wrong_count || 0));
+  const passRate = totalAttempts > 0 ? (q.correct_count || 0) / totalAttempts : null;
+  const flags = [];
+  let reviewStatus = 'approved';
+  if (totalAttempts >= 10 && passRate !== null) {
+    if (passRate >= 0.95) flags.push('pass_rate_too_high');
+    if (passRate <= 0.05) flags.push('pass_rate_too_low');
+  }
+  if (statsOverride?.discrimination_index !== null && statsOverride?.discrimination_index !== undefined) {
+    if (statsOverride.discrimination_index < 0) flags.push('negative_discrimination');
+    else if (statsOverride.discrimination_index < 0.2) flags.push('low_discrimination');
+  }
+  if (statsOverride?.empirical_difficulty && Math.abs(statsOverride.empirical_difficulty - (q.difficulty || 0)) >= 2) {
+    flags.push('difficulty_mismatch');
+  }
+  if (flags.length) reviewStatus = 'needs_review';
+  const qualityScore = statsOverride?.quality_score ?? Math.max(0, 100 - flags.length * 20);
+  return { reviewStatus, qualityFlags: flags, qualityScore };
+}
+
+function persistQuestionGovernance(questionId, governance, extra = {}) {
+  db.prepare(`
+    UPDATE questions
+    SET review_status = ?,
+        quality_flags = ?,
+        quality_score = ?,
+        archived_reason = COALESCE(?, archived_reason),
+        archived_at = COALESCE(?, archived_at),
+        archived_by = COALESCE(?, archived_by),
+        updated_at = datetime('now','localtime')
+    WHERE id = ?
+  `).run(
+    governance.reviewStatus || 'approved',
+    serializeFlags(governance.qualityFlags),
+    governance.qualityScore ?? null,
+    extra.archived_reason ?? null,
+    extra.archived_at ?? null,
+    extra.archived_by ?? null,
+    questionId
+  );
+}
+
+function snapshotQuestion(question) {
+  if (!question) return null;
+  return {
+    subject_id: question.subject_id,
+    type: question.type,
+    difficulty: question.difficulty,
+    content: question.content,
+    option_a: question.option_a,
+    option_b: question.option_b,
+    option_c: question.option_c,
+    option_d: question.option_d,
+    answer: question.answer,
+    explanation: question.explanation,
+    source: question.source,
+    tags: question.tags,
+    grade_level: question.grade_level,
+    audio_url: question.audio_url,
+    audio_transcript: question.audio_transcript,
+    image_url: question.image_url,
+    passage_id: question.passage_id,
+    passage_content: question.passage_content,
+    normalized_content: question.normalized_content,
+    content_hash: question.content_hash,
+    review_status: question.review_status,
+    quality_flags: question.quality_flags,
+    quality_score: question.quality_score,
+    is_archived: question.is_archived,
+    archived_reason: question.archived_reason,
+    archived_at: question.archived_at,
+    archived_by: question.archived_by
+  };
+}
+
+function logQuestionVersion(questionId, action, snapshot, changedBy) {
+  if (!snapshot) return;
+  const versionNo = (db.prepare(`SELECT COALESCE(MAX(version_no), 0) + 1 AS n FROM question_versions WHERE question_id = ?`).get(questionId)?.n) || 1;
+  db.prepare(`
+    INSERT INTO question_versions (question_id, version_no, action, changed_by, snapshot_json)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(questionId, versionNo, action, changedBy || null, JSON.stringify(snapshot));
+}
+
+function computeSnapshotDiff(fromSnapshot, toSnapshot) {
+  const from = fromSnapshot || {};
+  const to = toSnapshot || {};
+  const keys = Array.from(new Set([...Object.keys(from), ...Object.keys(to)]));
+  return keys
+    .filter((key) => JSON.stringify(from[key] ?? null) !== JSON.stringify(to[key] ?? null))
+    .map((key) => ({ field: key, from: from[key] ?? null, to: to[key] ?? null }));
+}
+
+function performReviewAction(questionId, action, actor, payload = {}) {
+  const question = db.prepare('SELECT * FROM questions WHERE id = ?').get(questionId);
+  if (!question) return { ok: false, status: 404, error: '找不到題目' };
+  if (action === 'approve') {
+    persistQuestionGovernance(question.id, { reviewStatus: 'approved', qualityFlags: [], qualityScore: question.quality_score ?? 100 });
+    const updated = db.prepare('SELECT * FROM questions WHERE id = ?').get(question.id);
+    logQuestionVersion(question.id, 'review_approve', snapshotQuestion(updated), actor);
+    return { ok: true, message: '題目已核准' };
+  }
+  if (action === 'archive') {
+    logQuestionVersion(question.id, 'before_archive', snapshotQuestion(question), actor);
+    db.prepare(`
+      UPDATE questions
+      SET is_archived = 1,
+          review_status = 'approved',
+          archived_reason = ?,
+          archived_at = datetime('now','localtime'),
+          archived_by = ?,
+          updated_at = datetime('now','localtime')
+      WHERE id = ?
+    `).run(payload.reason || '品質審查封存', actor, question.id);
+    const updated = db.prepare('SELECT * FROM questions WHERE id = ?').get(question.id);
+    logQuestionVersion(question.id, 'archive', snapshotQuestion(updated), actor);
+    return { ok: true, message: '題目已封存' };
+  }
+  if (action === 'adjust_difficulty') {
+    const nextDifficulty = Math.min(5, Math.max(1, parseInt(payload.difficulty, 10) || question.difficulty));
+    logQuestionVersion(question.id, 'before_adjust_difficulty', snapshotQuestion(question), actor);
+    db.prepare(`
+      UPDATE questions
+      SET difficulty = ?, review_status = 'approved', updated_at = datetime('now','localtime')
+      WHERE id = ?
+    `).run(nextDifficulty, question.id);
+    const updated = db.prepare('SELECT * FROM questions WHERE id = ?').get(question.id);
+    logQuestionVersion(question.id, 'adjust_difficulty', snapshotQuestion(updated), actor);
+    return { ok: true, message: '難度已更新' };
+  }
+  return { ok: false, status: 400, error: '不支援的審查動作' };
+}
+
+function upsertQuestionPayload(raw, { existing = null, actor = 'system' } = {}) {
+  const merged = {
+    ...(existing || {}),
+    ...(raw || {})
+  };
+  const errors = validateQuestionShape(merged);
+  if (errors.length) return { ok: false, status: 400, error: errors.join('；') };
+
+  const normalizedContent = normalizeQuestionContent(merged.content);
+  const contentHash = buildContentHash(merged.content);
+  const duplicate = findDuplicateQuestion({
+    content: merged.content,
+    grade_level: merged.grade_level || 'junior_high',
+    excludeId: existing?.id || null
+  });
+  if (duplicate) {
+    return { ok: false, status: 409, error: `偵測到重覆題目，題號 #${duplicate.id}` };
+  }
+
+  return {
+    ok: true,
+    record: {
+      subject_id: parseInt(merged.subject_id, 10),
+      type: merged.type,
+      difficulty: parseInt(merged.difficulty, 10),
+      content: String(merged.content).trim(),
+      option_a: merged.option_a || null,
+      option_b: merged.option_b || null,
+      option_c: merged.option_c || null,
+      option_d: merged.option_d || null,
+      answer: ['writing', 'speaking'].includes(merged.type) ? (merged.answer || '人工批改') : String(merged.answer).trim(),
+      explanation: merged.explanation || null,
+      source: merged.source || null,
+      tags: merged.tags || null,
+      grade_level: merged.grade_level || 'junior_high',
+      audio_url: merged.audio_url || null,
+      audio_transcript: merged.audio_transcript || null,
+      image_url: merged.image_url || null,
+      passage_id: merged.passage_id || null,
+      passage_content: merged.passage_content || null,
+      normalized_content: normalizedContent,
+      content_hash: contentHash,
+      review_status: merged.review_status || 'approved',
+      archived_by: merged.is_archived ? actor : null,
+      archived_reason: merged.archived_reason || null,
+      archived_at: merged.is_archived ? new Date().toISOString() : null
+    }
+  };
+}
+
+function backfillQuestionGovernance() {
+  const rows = db.prepare(`
+    SELECT id, content, correct_count, wrong_count, difficulty
+    FROM questions
+    WHERE normalized_content IS NULL OR content_hash IS NULL OR review_status IS NULL
+  `).all();
+  if (!rows.length) return;
+  const update = db.prepare(`
+    UPDATE questions
+    SET normalized_content = ?,
+        content_hash = ?,
+        review_status = COALESCE(review_status, ?),
+        quality_flags = COALESCE(quality_flags, ?),
+        quality_score = COALESCE(quality_score, ?)
+    WHERE id = ?
+  `);
+  const tx = db.transaction((items) => {
+    for (const row of items) {
+      const governance = computeQuestionGovernance(row);
+      update.run(
+        normalizeQuestionContent(row.content),
+        buildContentHash(row.content),
+        governance.reviewStatus,
+        serializeFlags(governance.qualityFlags),
+        governance.qualityScore,
+        row.id
+      );
+    }
+  });
+  tx(rows);
+}
+
+function examAvailability(exam, req = null) {
+  const now = new Date();
+  if (!exam) return { ok: false, code: 404, error: '找不到試卷' };
+  if (exam.status !== 'active') return { ok: false, code: 404, error: '試卷不存在或尚未開放' };
+  if (exam.starts_at && new Date(exam.starts_at) > now) return { ok: false, code: 403, error: '考試尚未開始' };
+  if (exam.ends_at && new Date(exam.ends_at) < now) return { ok: false, code: 403, error: '考試已截止' };
+  if (exam.access_code) {
+    if (!req) return { ok: true };
+    const code = req?.query?.access_code || req?.body?.access_code || '';
+    if (String(code) !== String(exam.access_code)) {
+      return { ok: false, code: 403, error: '考試存取碼錯誤', requires_access_code: true };
+    }
+  }
+  return { ok: true };
+}
+
+function summarizeExamForPublic(exam) {
+  return {
+    id: exam.id,
+    title: exam.title,
+    description: exam.description,
+    duration_min: exam.duration_min,
+    status: exam.status,
+    question_count: exam.question_count || 0,
+    total_score: exam.total_score || 0,
+    writing_count: exam.writing_count || 0,
+    starts_at: exam.starts_at || null,
+    ends_at: exam.ends_at || null,
+    requires_access_code: !!exam.access_code
+  };
+}
+
+function submissionAccessClause(token) {
+  return token ? { ok: true } : { ok: false, code: 403, error: '缺少查詢碼' };
+}
+
+backfillQuestionGovernance();
 
 function dedupeQuestionsByContent(questions) {
   const seenIds = new Set();
@@ -209,7 +670,7 @@ app.get('/api/questions/random', (req, res) => {
 
 // ─── Questions ───────────────────────────────────────────────────────────────
 app.get('/api/questions', (req, res) => {
-  const { subject_id, type, difficulty, search, grade_level, include_archived, page = 1, limit = 20 } = req.query;
+  const { subject_id, type, difficulty, search, grade_level, include_archived, page = 1, limit = 20, review_status } = req.query;
   const where = [];
   const params = [];
   if (!include_archived) { where.push('q.is_archived = 0'); }
@@ -218,6 +679,7 @@ app.get('/api/questions', (req, res) => {
   if (difficulty)  { where.push('q.difficulty = ?'); params.push(difficulty); }
   if (search)      { where.push('(q.content LIKE ? OR q.tags LIKE ?)'); params.push(`%${search}%`, `%${search}%`); }
   if (grade_level) { where.push('q.grade_level = ?'); params.push(grade_level); }
+  if (review_status) { where.push('q.review_status = ?'); params.push(review_status); }
 
   const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
   const pageNum  = Math.max(1, parseInt(page)  || 1);
@@ -242,56 +704,237 @@ app.get('/api/questions/:id', (req, res) => {
 });
 
 app.post('/api/questions', requireAdmin, (req, res) => {
-  const { subject_id, type, difficulty, content, option_a, option_b, option_c, option_d, answer, explanation, source, tags, grade_level = 'junior_high', audio_url, audio_transcript } = req.body;
-  if (!subject_id || !type || !difficulty || !content || !answer)
-    return res.status(400).json({ error: '必填欄位不完整' });
-  if (!['choice', 'true_false', 'fill', 'calculation', 'listening', 'cloze', 'reading', 'writing', 'speaking'].includes(type))
-    return res.status(400).json({ error: '題型值無效' });
-  if (!['elementary_6', 'junior_high', 'grade_7', 'grade_8', 'grade_9', 'bctest', 'gept_elementary'].includes(grade_level))
+  if (req.body.grade_level && !['elementary_6', 'junior_high', 'grade_7', 'grade_8', 'grade_9', 'bctest', 'gept_elementary'].includes(req.body.grade_level))
     return res.status(400).json({ error: '學段值無效' });
+  const prepared = upsertQuestionPayload(req.body, { actor: getAdminActor(req) });
+  if (!prepared.ok) return res.status(prepared.status).json({ error: prepared.error });
+  const q = prepared.record;
   const r = db.prepare(`
-    INSERT INTO questions (subject_id,type,difficulty,content,option_a,option_b,option_c,option_d,answer,explanation,source,tags,grade_level,audio_url,audio_transcript)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-  `).run(subject_id, type, difficulty, content, option_a||null, option_b||null, option_c||null, option_d||null, answer, explanation||null, source||null, tags||null, grade_level, audio_url||null, audio_transcript||null);
+    INSERT INTO questions (
+      subject_id,type,difficulty,content,option_a,option_b,option_c,option_d,answer,explanation,source,tags,
+      grade_level,audio_url,audio_transcript,image_url,passage_id,passage_content,normalized_content,content_hash,
+      review_status,archived_reason,archived_at,archived_by
+    )
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `).run(
+    q.subject_id, q.type, q.difficulty, q.content, q.option_a, q.option_b, q.option_c, q.option_d,
+    q.answer, q.explanation, q.source, q.tags, q.grade_level, q.audio_url, q.audio_transcript,
+    q.image_url, q.passage_id, q.passage_content, q.normalized_content, q.content_hash,
+    q.review_status, q.archived_reason, q.archived_at, q.archived_by
+  );
+  const inserted = db.prepare('SELECT * FROM questions WHERE id = ?').get(r.lastInsertRowid);
+  logQuestionVersion(r.lastInsertRowid, 'create', snapshotQuestion(inserted), getAdminActor(req));
   res.json({ id: r.lastInsertRowid, message: '題目新增成功' });
 });
 
 app.put('/api/questions/:id', requireAdmin, (req, res) => {
-  const { subject_id, type, difficulty, content, option_a, option_b, option_c, option_d, answer, explanation, source, tags, grade_level, audio_url, audio_transcript } = req.body;
-  if (type && !['choice', 'true_false', 'fill', 'calculation', 'listening', 'cloze', 'reading', 'writing', 'speaking'].includes(type))
+  const existing = db.prepare('SELECT * FROM questions WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: '找不到題目' });
+  if (req.body.type && !['choice', 'true_false', 'fill', 'calculation', 'listening', 'cloze', 'reading', 'writing', 'speaking'].includes(req.body.type))
     return res.status(400).json({ error: '題型值無效' });
-  if (grade_level && !['elementary_6', 'junior_high', 'grade_7', 'grade_8', 'grade_9', 'bctest', 'gept_elementary'].includes(grade_level))
+  if (req.body.grade_level && !['elementary_6', 'junior_high', 'grade_7', 'grade_8', 'grade_9', 'bctest', 'gept_elementary'].includes(req.body.grade_level))
     return res.status(400).json({ error: '學段值無效' });
-  // 使用 COALESCE 支援部分欄位更新，未傳入的欄位保留原值
+  const prepared = upsertQuestionPayload(req.body, { existing, actor: getAdminActor(req) });
+  if (!prepared.ok) return res.status(prepared.status).json({ error: prepared.error });
+  const q = prepared.record;
+  logQuestionVersion(existing.id, 'before_update', snapshotQuestion(existing), getAdminActor(req));
   const r = db.prepare(`
     UPDATE questions SET
-      subject_id=COALESCE(?,subject_id), type=COALESCE(?,type), difficulty=COALESCE(?,difficulty),
-      content=COALESCE(?,content),
-      option_a=COALESCE(?,option_a), option_b=COALESCE(?,option_b),
-      option_c=COALESCE(?,option_c), option_d=COALESCE(?,option_d),
-      answer=COALESCE(?,answer), explanation=COALESCE(?,explanation),
-      source=COALESCE(?,source), tags=COALESCE(?,tags),
-      grade_level=COALESCE(?,grade_level),
-      audio_url=COALESCE(?,audio_url), audio_transcript=COALESCE(?,audio_transcript),
+      subject_id=?, type=?, difficulty=?, content=?,
+      option_a=?, option_b=?, option_c=?, option_d=?,
+      answer=?, explanation=?, source=?, tags=?, grade_level=?,
+      audio_url=?, audio_transcript=?, image_url=?, passage_id=?, passage_content=?,
+      normalized_content=?, content_hash=?, review_status=?,
       updated_at=datetime('now','localtime')
     WHERE id=?
   `).run(
-    subject_id||null, type||null, difficulty||null, content||null,
-    option_a||null, option_b||null, option_c||null, option_d||null,
-    answer||null, explanation||null, source||null, tags||null,
-    grade_level||null, audio_url||null, audio_transcript||null, req.params.id
+    q.subject_id, q.type, q.difficulty, q.content,
+    q.option_a, q.option_b, q.option_c, q.option_d,
+    q.answer, q.explanation, q.source, q.tags,
+    q.grade_level, q.audio_url, q.audio_transcript, q.image_url, q.passage_id, q.passage_content,
+    q.normalized_content, q.content_hash, q.review_status, req.params.id
   );
-  if (r.changes === 0) return res.status(404).json({ error: '找不到題目' });
+  const updated = db.prepare('SELECT * FROM questions WHERE id = ?').get(req.params.id);
+  logQuestionVersion(existing.id, 'update', snapshotQuestion(updated), getAdminActor(req));
   res.json({ message: '題目更新成功' });
 });
 
+app.get('/api/question-review-queue', requireAdmin, (req, res) => {
+  const { grade_level, subject_id, review_status = 'needs_review', include_archived = '0' } = req.query;
+  const where = [];
+  const params = [];
+  if (review_status && review_status !== 'all') { where.push(`q.review_status = ?`); params.push(review_status); }
+  if (grade_level) { where.push('q.grade_level = ?'); params.push(grade_level); }
+  if (subject_id) { where.push('q.subject_id = ?'); params.push(subject_id); }
+  if (include_archived !== '1') { where.push('q.is_archived = 0'); }
+  const rows = db.prepare(`
+    SELECT q.*, s.name AS subject_name
+    FROM questions q
+    JOIN subjects s ON s.id = q.subject_id
+    ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+    ORDER BY q.quality_score ASC NULLS FIRST, q.updated_at DESC
+    LIMIT 200
+  `).all(...params).map(row => ({ ...row, quality_flags: parseJsonArray(row.quality_flags) }));
+  res.json(rows);
+});
+
+app.get('/api/question-review-history', requireAdmin, (req, res) => {
+  const { question_id, changed_by, action, limit = 100 } = req.query;
+  const where = ['1=1'];
+  const params = [];
+  if (question_id) { where.push('qv.question_id = ?'); params.push(question_id); }
+  if (changed_by) { where.push('qv.changed_by = ?'); params.push(changed_by); }
+  if (action) { where.push('qv.action = ?'); params.push(action); }
+  const rows = db.prepare(`
+    SELECT qv.id, qv.question_id, qv.version_no, qv.action, qv.changed_by, qv.created_at,
+           q.content AS current_content, s.name AS subject_name
+    FROM question_versions qv
+    LEFT JOIN questions q ON q.id = qv.question_id
+    LEFT JOIN subjects s ON s.id = q.subject_id
+    WHERE ${where.join(' AND ')}
+    ORDER BY qv.id DESC
+    LIMIT ?
+  `).all(...params, Math.min(500, Math.max(1, parseInt(limit, 10) || 100)));
+  res.json(rows);
+});
+
+app.get('/api/questions/:id/versions', requireAdmin, (req, res) => {
+  const rows = db.prepare(`
+    SELECT id, question_id, version_no, action, changed_by, created_at, snapshot_json
+    FROM question_versions
+    WHERE question_id = ?
+    ORDER BY version_no DESC, id DESC
+  `).all(req.params.id).map(row => ({
+    ...row,
+    snapshot: JSON.parse(row.snapshot_json || '{}')
+  }));
+  res.json(rows);
+});
+
+app.get('/api/questions/:id/version-diff', requireAdmin, (req, res) => {
+  const fromId = parseInt(req.query.from_version_id, 10);
+  const toId = parseInt(req.query.to_version_id, 10);
+  if (!fromId || !toId) return res.status(400).json({ error: '缺少版本比較參數' });
+  const versions = db.prepare(`
+    SELECT id, version_no, action, changed_by, created_at, snapshot_json
+    FROM question_versions
+    WHERE question_id = ? AND id IN (?, ?)
+  `).all(req.params.id, fromId, toId);
+  if (versions.length !== 2) return res.status(404).json({ error: '找不到要比較的版本' });
+  const fromVersion = versions.find(v => v.id === fromId);
+  const toVersion = versions.find(v => v.id === toId);
+  const fromSnapshot = JSON.parse(fromVersion.snapshot_json || '{}');
+  const toSnapshot = JSON.parse(toVersion.snapshot_json || '{}');
+  res.json({
+    from_version: { ...fromVersion, snapshot: fromSnapshot },
+    to_version: { ...toVersion, snapshot: toSnapshot },
+    changes: computeSnapshotDiff(fromSnapshot, toSnapshot)
+  });
+});
+
+app.post('/api/questions/:id/restore-version', requireAdmin, (req, res) => {
+  const versionId = parseInt(req.body?.version_id, 10);
+  if (!versionId) return res.status(400).json({ error: '缺少 version_id' });
+  const version = db.prepare(`
+    SELECT *
+    FROM question_versions
+    WHERE id = ? AND question_id = ?
+  `).get(versionId, req.params.id);
+  if (!version) return res.status(404).json({ error: '找不到版本資料' });
+  const existing = db.prepare('SELECT * FROM questions WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: '找不到原題目' });
+  const snapshot = JSON.parse(version.snapshot_json || '{}');
+  const prepared = upsertQuestionPayload(snapshot, { existing, actor: getAdminActor(req) });
+  if (!prepared.ok) return res.status(prepared.status).json({ error: prepared.error });
+  const q = prepared.record;
+  const actor = getAdminActor(req);
+  logQuestionVersion(existing.id, 'before_restore', snapshotQuestion(existing), actor);
+  db.prepare(`
+    UPDATE questions SET
+      subject_id=?, type=?, difficulty=?, content=?,
+      option_a=?, option_b=?, option_c=?, option_d=?,
+      answer=?, explanation=?, source=?, tags=?, grade_level=?,
+      audio_url=?, audio_transcript=?, image_url=?, passage_id=?, passage_content=?,
+      normalized_content=?, content_hash=?, review_status=?, quality_flags=?, quality_score=?,
+      is_archived=?, archived_reason=?, archived_at=?, archived_by=?,
+      updated_at=datetime('now','localtime')
+    WHERE id=?
+  `).run(
+    q.subject_id, q.type, q.difficulty, q.content,
+    q.option_a, q.option_b, q.option_c, q.option_d,
+    q.answer, q.explanation, q.source, q.tags,
+    q.grade_level, q.audio_url, q.audio_transcript, q.image_url, q.passage_id, q.passage_content,
+    q.normalized_content, q.content_hash, snapshot.review_status || q.review_status,
+    typeof snapshot.quality_flags === 'string' ? snapshot.quality_flags : serializeFlags(parseJsonArray(snapshot.quality_flags)),
+    snapshot.quality_score ?? null,
+    snapshot.is_archived ? 1 : 0,
+    snapshot.archived_reason || null,
+    snapshot.archived_at || null,
+    snapshot.archived_by || null,
+    req.params.id
+  );
+  const updated = db.prepare('SELECT * FROM questions WHERE id = ?').get(req.params.id);
+  logQuestionVersion(existing.id, 'restore', snapshotQuestion(updated), actor);
+  res.json({ success: true, message: '題目版本已回復' });
+});
+
+app.post('/api/questions/:id/review-action', requireAdmin, async (req, res) => {
+  const actor = getAdminActor(req);
+  const result = performReviewAction(req.params.id, req.body?.action, actor, req.body || {});
+  if (!result.ok) return res.status(result.status).json({ error: result.error });
+  return res.json({ success: true, message: result.message });
+});
+
+app.post('/api/questions/review-actions/batch', requireAdmin, (req, res) => {
+  const questionIds = Array.isArray(req.body?.question_ids) ? req.body.question_ids.map(id => parseInt(id, 10)).filter(Number.isInteger) : [];
+  const action = req.body?.action;
+  if (!questionIds.length) return res.status(400).json({ error: '缺少 question_ids' });
+  const actor = getAdminActor(req);
+  const summary = { success_ids: [], failed: [] };
+  const tx = db.transaction(() => {
+    for (const questionId of questionIds) {
+      const result = performReviewAction(questionId, action, actor, req.body || {});
+      if (result.ok) summary.success_ids.push(questionId);
+      else summary.failed.push({ question_id: questionId, error: result.error });
+    }
+  });
+  tx();
+  res.json({
+    success: true,
+    action,
+    success_count: summary.success_ids.length,
+    failed_count: summary.failed.length,
+    ...summary
+  });
+});
+
 app.delete('/api/questions/:id', requireAdmin, (req, res) => {
+  const question = db.prepare('SELECT * FROM questions WHERE id = ?').get(req.params.id);
+  if (!question) return res.status(404).json({ error: '找不到題目' });
+  logQuestionVersion(question.id, 'delete', snapshotQuestion(question), getAdminActor(req));
   const r = db.prepare('DELETE FROM questions WHERE id = ?').run(req.params.id);
-  if (r.changes === 0) return res.status(404).json({ error: '找不到題目' });
   res.json({ message: '題目刪除成功' });
 });
 
 // ─── Exams ───────────────────────────────────────────────────────────────────
+app.get('/api/public/exams', (req, res) => {
+  const rows = db.prepare(`
+    SELECT e.*, COUNT(eq.id) as question_count,
+           SUM(eq.score) as total_score,
+           COUNT(CASE WHEN q.type IN ('writing','speaking') THEN 1 END) as writing_count
+    FROM exams e
+    LEFT JOIN exam_questions eq ON eq.exam_id = e.id
+    LEFT JOIN questions q ON q.id = eq.question_id
+    WHERE e.status = 'active'
+    GROUP BY e.id
+    ORDER BY COALESCE(e.starts_at, e.created_at) DESC, e.id DESC
+  `).all();
+  const visible = rows
+    .filter(exam => examAvailability(exam).ok)
+    .map(summarizeExamForPublic);
+  res.json(visible);
+});
+
 app.get('/api/exams', requireAdmin, (req, res) => {
   const rows = db.prepare(`
     SELECT e.*, COUNT(eq.id) as question_count,
@@ -319,10 +962,13 @@ app.get('/api/exams/:id', requireAdmin, (req, res) => {
   res.json({ ...exam, questions });
 });
 
-// GET exam for students (hides answers)
-app.get('/api/exams/:id/take', (req, res) => {
-  const exam = db.prepare('SELECT * FROM exams WHERE id = ? AND status = ?').get(req.params.id, 'active');
-  if (!exam) return res.status(404).json({ error: '試卷不存在或尚未開放' });
+function getPublicExamPayload(req, res) {
+  const exam = db.prepare('SELECT * FROM exams WHERE id = ?').get(req.params.id);
+  const availability = examAvailability(exam, req);
+  if (!availability.ok) {
+    res.status(availability.code).json({ error: availability.error, requires_access_code: availability.requires_access_code || false });
+    return null;
+  }
   const questions = db.prepare(`
     SELECT eq.sort_order, eq.score, q.id, q.type, q.content, q.subject_id,
            q.option_a, q.option_b, q.option_c, q.option_d, q.difficulty,
@@ -333,18 +979,109 @@ app.get('/api/exams/:id/take', (req, res) => {
     JOIN subjects s ON s.id = q.subject_id
     WHERE eq.exam_id = ? ORDER BY eq.sort_order
   `).all(req.params.id);
-  res.json({ ...exam, questions: dedupeQuestionsByContent(questions) });
+  return { ...summarizeExamForPublic(exam), questions: dedupeQuestionsByContent(questions) };
+}
+
+app.get('/api/public/exams/:id', (req, res) => {
+  const payload = getPublicExamPayload(req, res);
+  if (!payload) return;
+  res.json(payload);
+});
+
+// GET exam for students (hides answers)
+app.get('/api/exams/:id/take', (req, res) => {
+  const payload = getPublicExamPayload(req, res);
+  if (!payload) return;
+  res.json(payload);
+});
+
+app.get('/api/public/exams/:id/take', (req, res) => {
+  const payload = getPublicExamPayload(req, res);
+  if (!payload) return;
+  res.json(payload);
+});
+
+app.post('/api/public/exams/:id/session', (req, res) => {
+  const { student_name, student_id, access_code } = req.body || {};
+  if (!student_name) return res.status(400).json({ error: '缺少 student_name' });
+  const exam = db.prepare('SELECT * FROM exams WHERE id = ?').get(req.params.id);
+  const availability = examAvailability(exam, { ...req, body: { access_code } });
+  if (!availability.ok) return res.status(availability.code).json({ error: availability.error, requires_access_code: availability.requires_access_code || false });
+
+  const existing = db.prepare(`
+    SELECT *
+    FROM submissions
+    WHERE exam_id = ?
+      AND status = 'in_progress'
+      AND (
+        (? <> '' AND student_id = ?)
+        OR (? <> '' AND student_name = ?)
+      )
+    ORDER BY id DESC
+    LIMIT 1
+  `).get(req.params.id, String(student_id || ''), String(student_id || ''), String(student_name || ''), String(student_name || ''));
+
+  if (existing && exam.allow_resume) {
+    return res.json({
+      resumed: true,
+      submission_id: existing.id,
+      lookup_token: existing.lookup_token,
+      answers: JSON.parse(existing.answers || '{}'),
+      started_at: existing.started_at,
+      last_seen_at: existing.last_seen_at,
+      status: existing.status
+    });
+  }
+
+  const priorAttempts = db.prepare(`
+    SELECT COUNT(*) AS cnt
+    FROM submissions
+    WHERE exam_id = ?
+      AND status = 'submitted'
+      AND (
+        (? <> '' AND student_id = ?)
+        OR (? <> '' AND student_name = ?)
+      )
+  `).get(req.params.id, String(student_id || ''), String(student_id || ''), String(student_name || ''), String(student_name || '')).cnt;
+  if ((exam.max_attempts || 0) > 0 && priorAttempts >= exam.max_attempts) {
+    return res.status(403).json({ error: '已達此試卷可作答次數上限' });
+  }
+
+  const lookupToken = crypto.randomBytes(12).toString('hex');
+  const created = db.prepare(`
+    INSERT INTO submissions (exam_id, student_name, student_id, answers, score, total_score, lookup_token, started_at, last_seen_at, status)
+    VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?, 'in_progress')
+  `).run(req.params.id, student_name, student_id || null, '{}', lookupToken, datetimeNow(), datetimeNow());
+  res.json({
+    resumed: false,
+    submission_id: created.lastInsertRowid,
+    lookup_token: lookupToken,
+    answers: {},
+    started_at: datetimeNow(),
+    status: 'in_progress'
+  });
 });
 
 app.post('/api/exams', requireAdmin, (req, res) => {
-  const { title, description, duration_min = 40, status = 'active', question_ids } = req.body;
+  const {
+    title, description, duration_min = 40, status = 'active', question_ids,
+    starts_at = null, ends_at = null, access_code = null, max_attempts = 0, allow_resume = 1
+  } = req.body;
   if (!title) return res.status(400).json({ error: '試卷標題為必填' });
   if (!['draft', 'active', 'closed'].includes(status))
     return res.status(400).json({ error: '狀態值無效' });
   const normalizedQuestionIds = normalizeExamQuestionIds(question_ids);
   // L-2: Transaction 保護多步驟寫入
   const createExam = db.transaction(() => {
-    const exam = db.prepare(`INSERT INTO exams (title, description, duration_min, status) VALUES (?,?,?,?)`).run(title, description||null, duration_min, status);
+    const exam = db.prepare(`
+      INSERT INTO exams (title, description, duration_min, status, starts_at, ends_at, access_code, max_attempts, allow_resume)
+      VALUES (?,?,?,?,?,?,?,?,?)
+    `).run(
+      title, description||null, duration_min, status,
+      starts_at || null, ends_at || null, access_code || null,
+      Math.max(0, parseInt(max_attempts, 10) || 0),
+      allow_resume ? 1 : 0
+    );
     if (normalizedQuestionIds.length) {
       const ins = db.prepare(`INSERT INTO exam_questions (exam_id,question_id,sort_order,score) VALUES (?,?,?,?)`);
       normalizedQuestionIds.forEach((qid, i) => ins.run(exam.lastInsertRowid, qid.id, i + 1, qid.score));
@@ -356,8 +1093,8 @@ app.post('/api/exams', requireAdmin, (req, res) => {
 });
 
 app.put('/api/exams/:id', requireAdmin, (req, res) => {
-  const { title, description, duration_min, status, question_ids } = req.body;
-  const exam = db.prepare('SELECT id FROM exams WHERE id = ?').get(req.params.id);
+  const { title, description, duration_min, status, question_ids, starts_at, ends_at, access_code, max_attempts, allow_resume } = req.body;
+  const exam = db.prepare('SELECT * FROM exams WHERE id = ?').get(req.params.id);
   if (!exam) return res.status(404).json({ error: '找不到試卷' });
   const normalizedQuestionIds = question_ids ? normalizeExamQuestionIds(question_ids) : null;
   // L-2: Transaction 保護；使用 COALESCE 支援部分欄位更新
@@ -365,9 +1102,18 @@ app.put('/api/exams/:id', requireAdmin, (req, res) => {
     db.prepare(`
       UPDATE exams SET
         title=COALESCE(?,title), description=COALESCE(?,description),
-        duration_min=COALESCE(?,duration_min), status=COALESCE(?,status)
+        duration_min=COALESCE(?,duration_min), status=COALESCE(?,status),
+        starts_at=?, ends_at=?, access_code=?, max_attempts=?, allow_resume=?
       WHERE id=?
-    `).run(title||null, description||null, duration_min||null, status||null, req.params.id);
+    `).run(
+      title||null, description||null, duration_min||null, status||null,
+      starts_at === undefined ? exam.starts_at : (starts_at || null),
+      ends_at === undefined ? exam.ends_at : (ends_at || null),
+      access_code === undefined ? exam.access_code : (access_code || null),
+      max_attempts === undefined ? exam.max_attempts : Math.max(0, parseInt(max_attempts, 10) || 0),
+      allow_resume === undefined ? exam.allow_resume : (allow_resume ? 1 : 0),
+      req.params.id
+    );
     if (normalizedQuestionIds) {
       db.prepare(`DELETE FROM exam_questions WHERE exam_id = ?`).run(req.params.id);
       const ins = db.prepare(`INSERT INTO exam_questions (exam_id,question_id,sort_order,score) VALUES (?,?,?,?)`);
@@ -430,26 +1176,48 @@ ${essay_topic ? '' : '請確保題目主題多元（生活經驗、自然景物�
 ${hint ? `補充要求：${hint}` : ''}`;
     }
 
-    const questions = dedupeQuestionsByContent(await generateQuestions(provider, userPrompt));
+    const generated = dedupeQuestionsByContent(await generateQuestions(provider, userPrompt));
+    const preview = [];
+    for (const q of generated.slice(0, count * 2)) {
+      const candidate = {
+        subject_id,
+        subject_name: subject.name,
+        type,
+        difficulty: parseInt(difficulty, 10),
+        grade_level,
+        content: q.content || '',
+        option_a: q.option_a || null,
+        option_b: q.option_b || null,
+        option_c: q.option_c || null,
+        option_d: q.option_d || null,
+        answer: q.answer || '',
+        explanation: q.explanation || null,
+        tags: q.tags || null,
+        audio_transcript: q.audio_transcript || null,
+        validation_errors: validateQuestionShape({
+          ...q,
+          subject_id,
+          type,
+          difficulty,
+          grade_level
+        })
+      };
+      const duplicate = findDuplicateQuestion({ content: candidate.content, grade_level });
+      candidate.is_duplicate = !!duplicate;
+      if (duplicate) candidate.validation_errors.push(`與既有題目 #${duplicate.id} 重覆`);
+      preview.push(candidate);
+      if (preview.length >= count) break;
+    }
 
-    // 將科目與型別資訊補入預覽結果
-    const preview = questions.slice(0, count).map(q => ({
-      subject_id,
-      subject_name: subject.name,
-      type,
-      difficulty: parseInt(difficulty),
-      grade_level,
-      content:     q.content     || '',
-      option_a:    q.option_a    || null,
-      option_b:    q.option_b    || null,
-      option_c:    q.option_c    || null,
-      option_d:    q.option_d    || null,
-      answer:      q.answer      || '',
-      explanation: q.explanation || null,
-      tags:        q.tags        || null
-    }));
-
-    res.json({ provider, count: preview.length, questions: preview });
+    res.json({
+      provider,
+      count: preview.length,
+      questions: preview,
+      summary: {
+        valid_count: preview.filter(q => !q.validation_errors.length).length,
+        duplicate_count: preview.filter(q => q.is_duplicate).length
+      }
+    });
   } catch (err) {
     const isKeyMissing = err.message.includes('未設定');
     res.status(isKeyMissing ? 503 : 500).json({ error: err.message });
@@ -464,21 +1232,24 @@ app.post('/api/questions/batch', requireAdmin, (req, res) => {
 
   const ins = db.prepare(`
     INSERT INTO questions
-      (subject_id,type,difficulty,content,option_a,option_b,option_c,option_d,answer,explanation,source,tags,grade_level,audio_url,audio_transcript)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      (subject_id,type,difficulty,content,option_a,option_b,option_c,option_d,answer,explanation,source,tags,grade_level,
+       audio_url,audio_transcript,image_url,passage_id,passage_content,normalized_content,content_hash,review_status)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `);
   const insertAll = db.transaction((items) => {
     const ids = [];
     for (const q of items) {
-      if (!q.subject_id || !q.type || !q.difficulty || !q.content || !q.answer)
-        throw new Error('題目資料不完整，缺少必填欄位');
-  if (!['elementary_6', 'junior_high', 'grade_7', 'grade_8', 'grade_9', 'bctest', 'gept_elementary'].includes(q.grade_level || 'junior_high'))
+      if (!['elementary_6', 'junior_high', 'grade_7', 'grade_8', 'grade_9', 'bctest', 'gept_elementary'].includes(q.grade_level || 'junior_high'))
         throw new Error('學段值無效');
+      const prepared = upsertQuestionPayload(q, { actor: getAdminActor(req) });
+      if (!prepared.ok) throw new Error(prepared.error);
+      const item = prepared.record;
       const r = ins.run(
-        q.subject_id, q.type, q.difficulty, q.content,
-        q.option_a||null, q.option_b||null, q.option_c||null, q.option_d||null,
-        q.answer, q.explanation||null, q.source||null, q.tags||null,
-        q.grade_level||'junior_high', q.audio_url||null, q.audio_transcript||null
+        item.subject_id, item.type, item.difficulty, item.content,
+        item.option_a, item.option_b, item.option_c, item.option_d,
+        item.answer, item.explanation, item.source, item.tags,
+        item.grade_level, item.audio_url, item.audio_transcript, item.image_url, item.passage_id, item.passage_content,
+        item.normalized_content, item.content_hash, item.review_status
       );
       ids.push(r.lastInsertRowid);
     }
@@ -494,12 +1265,49 @@ app.post('/api/questions/batch', requireAdmin, (req, res) => {
 });
 
 // ─── Submissions ─────────────────────────────────────────────────────────────
+app.put('/api/public/submissions/:id/progress', (req, res) => {
+  const { lookup_token, answers } = req.body || {};
+  if (!lookup_token) return res.status(400).json({ error: '缺少查詢碼' });
+  const submission = db.prepare(`SELECT * FROM submissions WHERE id = ?`).get(req.params.id);
+  if (!submission) return res.status(404).json({ error: '找不到作答 session' });
+  if (submission.lookup_token !== lookup_token) return res.status(403).json({ error: '查詢碼錯誤' });
+  if (submission.status !== 'in_progress') return res.status(400).json({ error: '此作答已完成，無法再更新進度' });
+  const now = datetimeNow();
+  db.prepare(`
+    UPDATE submissions
+    SET answers = ?, last_seen_at = ?
+    WHERE id = ?
+  `).run(JSON.stringify(answers || {}), now, req.params.id);
+  res.json({ success: true, last_seen_at: now });
+});
+
 app.post('/api/exams/:id/submit', submitLimiter, (req, res) => {
-  const { student_name, student_id, answers } = req.body;
+  const { student_name, student_id, answers, access_code, submission_id, lookup_token } = req.body;
   if (!student_name || !answers) return res.status(400).json({ error: '缺少必要資料' });
 
-  const exam = db.prepare('SELECT * FROM exams WHERE id = ? AND status = ?').get(req.params.id, 'active');
-  if (!exam) return res.status(403).json({ error: '試卷不存在或尚未開放' });
+  const exam = db.prepare('SELECT * FROM exams WHERE id = ?').get(req.params.id);
+  const availability = examAvailability(exam, { ...req, body: { access_code } });
+  if (!availability.ok) return res.status(availability.code).json({ error: availability.error });
+  const existingSubmission = submission_id
+    ? db.prepare(`SELECT * FROM submissions WHERE id = ? AND exam_id = ?`).get(submission_id, req.params.id)
+    : null;
+  if (existingSubmission) {
+    if (existingSubmission.lookup_token !== lookup_token) return res.status(403).json({ error: '查詢碼錯誤' });
+    if (existingSubmission.status === 'submitted') return res.status(400).json({ error: '此作答已經繳交' });
+  }
+  const priorAttempts = db.prepare(`
+    SELECT COUNT(*) AS cnt
+    FROM submissions
+    WHERE exam_id = ?
+      AND status = 'submitted'
+      AND (
+        (? <> '' AND student_id = ?)
+        OR (? <> '' AND student_name = ?)
+      )
+  `).get(req.params.id, String(student_id || ''), String(student_id || ''), String(student_name || ''), String(student_name || '')).cnt;
+  if ((exam.max_attempts || 0) > 0 && priorAttempts >= exam.max_attempts && !existingSubmission) {
+    return res.status(403).json({ error: '已達此試卷可作答次數上限' });
+  }
 
   const questions = db.prepare(`
     SELECT eq.question_id, eq.score, q.answer, q.type
@@ -544,81 +1352,113 @@ app.post('/api/exams/:id/submit', submitLimiter, (req, res) => {
 
   // L-2: Transaction 保護提交與明細寫入，同步更新答對/答錯/不會次數
   const saveSubmission = db.transaction(() => {
-    const sub = db.prepare(`
-      INSERT INTO submissions (exam_id, student_name, student_id, answers, score, total_score)
-      VALUES (?,?,?,?,?,?)
-    `).run(req.params.id, student_name, student_id||null, JSON.stringify(answers), earnedScore, totalScore);
+    const now = datetimeNow();
+    let submissionRowId;
+    let persistedLookupToken;
+    if (existingSubmission) {
+      db.prepare(`DELETE FROM answer_details WHERE submission_id = ?`).run(existingSubmission.id);
+      db.prepare(`
+        UPDATE submissions
+        SET student_name = ?, student_id = ?, answers = ?, score = ?, total_score = ?, last_seen_at = ?, status = 'submitted'
+        WHERE id = ?
+      `).run(student_name, student_id || null, JSON.stringify(answers), earnedScore, totalScore, now, existingSubmission.id);
+      submissionRowId = existingSubmission.id;
+      persistedLookupToken = existingSubmission.lookup_token;
+    } else {
+      persistedLookupToken = crypto.randomBytes(12).toString('hex');
+      const sub = db.prepare(`
+        INSERT INTO submissions (exam_id, student_name, student_id, answers, score, total_score, lookup_token, started_at, last_seen_at, status)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
+      `).run(
+        req.params.id, student_name, student_id||null, JSON.stringify(answers), earnedScore, totalScore,
+        persistedLookupToken, now, now, 'submitted'
+      );
+      submissionRowId = sub.lastInsertRowid;
+    }
     const insDetail   = db.prepare(`INSERT INTO answer_details (submission_id,question_id,given_answer,is_correct,score_earned,grading_status) VALUES (?,?,?,?,?,?)`);
     const updCorrect  = db.prepare(`UPDATE questions SET correct_count    = correct_count    + 1 WHERE id = ?`);
     const updWrong    = db.prepare(`UPDATE questions SET wrong_count      = wrong_count      + 1 WHERE id = ?`);
     const updDontKnow = db.prepare(`UPDATE questions SET dont_know_count  = dont_know_count  + 1 WHERE id = ?`);
     details.forEach(d => {
-      insDetail.run(sub.lastInsertRowid, d.question_id, d.given_answer, d.is_correct, d.score_earned, d.grading_status);
+      insDetail.run(submissionRowId, d.question_id, d.given_answer, d.is_correct, d.score_earned, d.grading_status);
       if (d.is_correct === 1) updCorrect.run(d.question_id);
       else if (d.is_dont_know) updDontKnow.run(d.question_id);
       else if (d.grading_status !== 'pending') updWrong.run(d.question_id);
     });
-    return sub.lastInsertRowid;
+    return { id: submissionRowId, lookup_token: persistedLookupToken };
   });
   const submissionId = saveSubmission();
 
-  // 非同步封存超過5次答對的題目並 LLM 自動替換（不阻塞回應）
+  // 非同步重新評估題目品質（不阻塞回應）
   setImmediate(() => archiveAndReplace());
 
-  res.json({ submission_id: submissionId, score: earnedScore, total_score: totalScore, percentage: Math.round(earnedScore / totalScore * 100) });
+  res.json({
+    submission_id: submissionId.id,
+    lookup_token: submissionId.lookup_token,
+    score: earnedScore,
+    total_score: totalScore,
+    percentage: Math.round(earnedScore / totalScore * 100)
+  });
 });
 
-// 封存答對 >5 次的題目，並用 LLM 自動生成難度 +1 的替換題
+app.post('/api/public/audio/upload', (req, res, next) => {
+  upload.single('audio')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    if (!req.file) return res.status(400).json({ error: '未收到音訊檔案' });
+    const audioUrl = `/audio/${req.file.filename}`;
+    res.json({ audio_url: audioUrl, filename: req.file.filename });
+  });
+});
+
+// 重新評估高作答題目的品質，改為送審而不是直接封存
 async function archiveAndReplace() {
   const toArchive = db.prepare(`
     SELECT q.*, s.name as subject_name, s.code as subject_code
     FROM questions q JOIN subjects s ON s.id = q.subject_id
-    WHERE q.correct_count > 5 AND q.is_archived = 0
+    WHERE q.is_archived = 0
+      AND (q.correct_count + q.wrong_count) >= 10
+      AND (q.correct_count >= 8 OR q.wrong_count >= 8)
   `).all();
   if (!toArchive.length) return;
 
-  const archive = db.prepare(`UPDATE questions SET is_archived = 1 WHERE id = ?`);
-  const provider = process.env.LLM_PROVIDER || 'openai';
-
   for (const q of toArchive) {
-    // 先封存
-    archive.run(q.id);
-    console.log(`[AutoArchive] 題目 #${q.id}（${q.subject_name}，難度${q.difficulty}）答對 >5 次，已封存`);
-
-    // 嘗試 LLM 自動生成替換題
-    const newDiff = Math.min(q.difficulty + 1, 5);
-    const isEssayQ = (q.subject_code || '').startsWith('ESSAY');
-    const typeLabel = { choice: '單選題（A/B/C/D）', true_false: '是非題（T/F）', fill: '填空題', calculation: '計算題', listening: '英語聽力選擇題', cloze: 'GEPT 段落填空', reading: 'GEPT 閱讀理解', writing: isEssayQ ? '國文作文' : 'GEPT 寫作', speaking: 'GEPT 口說' }[q.type] || q.type;
-    const gradeLabelMap2 = {elementary_6:'國小六年級',junior_high:'升國中（資優班）',grade_7:'國一（七年級）',grade_8:'國二（八年級）',grade_9:'國三（九年級）',bctest:'國中教育會考',gept_elementary:'全民英檢初級'};
-    const gradeLabel = gradeLabelMap2[q.grade_level] || '升國中（資優班）';
-    const prompt = isEssayQ && q.type === 'writing'
-      ? `請出 1 道適合${gradeLabel}學生的國文作文題目，難度 ${newDiff}/5。使用繁體中文，勿要求英文寫作。請勿與以下題目重複：${q.content}`
-      : `請出 1 題「${q.subject_name}」${gradeLabel}的${typeLabel}，難度 ${newDiff}/5（1 最易，5 最難）。請勿與以下題目重複：${q.content}`;
-
-    try {
-      const generated = await generateQuestions(provider, prompt);
-      if (!generated || !generated.length) throw new Error('LLM 回傳空陣列');
-      const nq = generated[0];
-      db.prepare(`
-        INSERT INTO questions (subject_id, type, difficulty, content, option_a, option_b, option_c, option_d, answer, explanation, tags, grade_level, source)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        q.subject_id, q.type, newDiff,
-        nq.content || '', nq.option_a || null, nq.option_b || null, nq.option_c || null, nq.option_d || null,
-        nq.answer || '', nq.explanation || null, nq.tags || null, q.grade_level,
-        `自動替換（原題 #${q.id}）`
-      );
-      console.log(`[AutoReplace] 已為題目 #${q.id} 生成難度 ${newDiff} 替換題`);
-    } catch (err) {
-      console.warn(`[AutoReplace] 題目 #${q.id} LLM 替換失敗：${err.message}`);
-    }
+    const totalAttempts = (q.correct_count || 0) + (q.wrong_count || 0);
+    const passRate = totalAttempts > 0 ? (q.correct_count || 0) / totalAttempts : 0;
+    const empiricalDifficulty = passRate >= 0.8 ? 1 : passRate >= 0.6 ? 2 : passRate >= 0.4 ? 3 : passRate >= 0.2 ? 4 : 5;
+    const governance = computeQuestionGovernance(q, {
+      total_attempts: totalAttempts,
+      empirical_difficulty: empiricalDifficulty,
+      quality_score: Math.max(0, 100 - (Math.abs(empiricalDifficulty - q.difficulty) >= 2 ? 20 : 0) - (passRate >= 0.95 || passRate <= 0.05 ? 20 : 0))
+    });
+    if (governance.reviewStatus !== 'needs_review') continue;
+    persistQuestionGovernance(q.id, governance);
+    console.log(`[QualityReview] 題目 #${q.id}（${q.subject_name}，難度${q.difficulty}）已列入審查清單`);
   }
 }
 
 // GET submission result
+app.get('/api/submissions/lookup', (req, res) => {
+  const { token } = req.query;
+  if (!token) return res.status(400).json({ error: '缺少查詢碼' });
+  const row = db.prepare(`
+    SELECT s.id, s.exam_id, s.student_name, s.student_id, s.score, s.total_score, s.submitted_at, s.status,
+           e.title AS exam_title
+    FROM submissions s
+    JOIN exams e ON e.id = s.exam_id
+    WHERE s.lookup_token = ?
+    ORDER BY s.id DESC
+    LIMIT 1
+  `).get(String(token));
+  if (!row) return res.status(404).json({ error: '找不到符合的作答紀錄' });
+  res.json(row);
+});
+
 app.get('/api/submissions/:id', (req, res) => {
+  const token = String(req.query.token || '');
+  if (!token) return res.status(403).json({ error: '缺少查詢碼' });
   const sub = db.prepare('SELECT * FROM submissions WHERE id = ?').get(req.params.id);
   if (!sub) return res.status(404).json({ error: '找不到作答紀錄' });
+  if (sub.lookup_token !== token) return res.status(403).json({ error: '查詢碼錯誤' });
   const details = db.prepare(`
     SELECT ad.*, q.content, q.answer as correct_answer, q.explanation, q.type,
            q.option_a, q.option_b, q.option_c, q.option_d
@@ -630,8 +1470,11 @@ app.get('/api/submissions/:id', (req, res) => {
 
 // GET analysis report for a submission
 app.get('/api/submissions/:id/analysis', (req, res) => {
+  const token = String(req.query.token || '');
+  if (!token) return res.status(403).json({ error: '缺少查詢碼' });
   const sub = db.prepare('SELECT * FROM submissions WHERE id = ?').get(req.params.id);
   if (!sub) return res.status(404).json({ error: '找不到作答紀錄' });
+  if (sub.lookup_token !== token) return res.status(403).json({ error: '查詢碼錯誤' });
 
   const exam = db.prepare('SELECT title FROM exams WHERE id = ?').get(sub.exam_id);
   const details = db.prepare(`
@@ -1041,6 +1884,69 @@ app.get('/api/analytics/student-ability', requireAdmin, (req, res) => {
     overall_ability: estimateAbilityRasch(details.map(d => ({ difficulty: d.difficulty, is_correct: d.is_correct }))),
     ability_profile
   });
+});
+
+app.get('/api/students/wrong-book', requireAdmin, (req, res) => {
+  const { student_name, student_id, grade_level } = req.query;
+  if (!student_name && !student_id) return res.status(400).json({ error: '請提供 student_name 或 student_id' });
+  const where = ['1=1'];
+  const params = [];
+  if (student_name) { where.push('s.student_name = ?'); params.push(student_name); }
+  if (student_id) { where.push('s.student_id = ?'); params.push(student_id); }
+  if (grade_level) { where.push('q.grade_level = ?'); params.push(grade_level); }
+  const rows = db.prepare(`
+    SELECT q.id, q.content, q.answer, q.explanation, q.difficulty, q.grade_level, sub.name AS subject_name,
+           COUNT(*) AS wrong_count,
+           MAX(s.submitted_at) AS last_wrong_at
+    FROM answer_details ad
+    JOIN submissions s ON s.id = ad.submission_id
+    JOIN questions q ON q.id = ad.question_id
+    JOIN subjects sub ON sub.id = q.subject_id
+    WHERE ad.is_correct = 0 AND ${where.join(' AND ')}
+    GROUP BY q.id
+    ORDER BY wrong_count DESC, last_wrong_at DESC
+    LIMIT 200
+  `).all(...params);
+  res.json(rows);
+});
+
+function toCsv(rows) {
+  if (!rows.length) return '';
+  const columns = Object.keys(rows[0]);
+  const escapeCell = (value) => {
+    const text = value == null ? '' : String(value);
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+  return [columns.join(','), ...rows.map(row => columns.map(col => escapeCell(row[col])).join(','))].join('\n');
+}
+
+app.get('/api/export/questions.csv', requireAdmin, (req, res) => {
+  const rows = db.prepare(`
+    SELECT q.id, s.name AS subject_name, q.grade_level, q.type, q.difficulty, q.review_status,
+           q.quality_score, q.is_archived, q.archived_reason, q.content
+    FROM questions q
+    JOIN subjects s ON s.id = q.subject_id
+    ORDER BY q.grade_level, q.subject_id, q.id
+  `).all();
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename=\"question-bank.csv\"');
+  res.send('\uFEFF' + toCsv(rows));
+});
+
+app.get('/api/export/exams/:id/stats.csv', requireAdmin, (req, res) => {
+  const exam = db.prepare('SELECT title FROM exams WHERE id = ?').get(req.params.id);
+  if (!exam) return res.status(404).json({ error: '找不到試卷' });
+  const rows = db.prepare(`
+    SELECT student_name, student_id, score, total_score,
+           ROUND(score * 100.0 / NULLIF(total_score,0), 1) AS percentage,
+           submitted_at
+    FROM submissions
+    WHERE exam_id = ?
+    ORDER BY submitted_at DESC
+  `).all(req.params.id);
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename=\"exam-${req.params.id}-stats.csv\"`);
+  res.send('\uFEFF' + toCsv(rows));
 });
 
 // GET personalized recommendations

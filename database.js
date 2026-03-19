@@ -1,7 +1,21 @@
 const Database = require('better-sqlite3');
 const path = require('path');
+const crypto = require('crypto');
 
 const db = new Database(path.join(__dirname, 'exam.db'));
+
+function normalizeQuestionContent(content) {
+  return String(content || '')
+    .replace(/\$+/g, '')
+    .replace(/\\[a-zA-Z]+/g, '')
+    .replace(/[^\p{L}\p{N}]+/gu, '')
+    .toLowerCase()
+    .trim();
+}
+
+function buildContentHash(content) {
+  return crypto.createHash('sha1').update(normalizeQuestionContent(content)).digest('hex');
+}
 
 db.exec(`
   PRAGMA journal_mode = WAL;
@@ -67,6 +81,36 @@ db.exec(`
     given_answer  TEXT,
     is_correct    INTEGER,
     score_earned  REAL DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS admins (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    username      TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    display_name  TEXT,
+    role          TEXT NOT NULL DEFAULT 'admin',
+    is_active     INTEGER NOT NULL DEFAULT 1,
+    created_at    TEXT DEFAULT (datetime('now','localtime')),
+    updated_at    TEXT DEFAULT (datetime('now','localtime'))
+  );
+
+  CREATE TABLE IF NOT EXISTS admin_sessions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    admin_id    INTEGER NOT NULL REFERENCES admins(id) ON DELETE CASCADE,
+    token_hash  TEXT NOT NULL UNIQUE,
+    expires_at  TEXT NOT NULL,
+    created_at  TEXT DEFAULT (datetime('now','localtime')),
+    last_seen_at TEXT DEFAULT (datetime('now','localtime'))
+  );
+
+  CREATE TABLE IF NOT EXISTS question_versions (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    question_id   INTEGER NOT NULL,
+    version_no    INTEGER NOT NULL,
+    action        TEXT NOT NULL,
+    changed_by    TEXT,
+    snapshot_json TEXT NOT NULL,
+    created_at    TEXT DEFAULT (datetime('now','localtime'))
   );
 `);
 
@@ -164,6 +208,30 @@ if (!cols.includes('grade_level')) {
   if (!qCols.includes('model_essay')) {
     db.exec(`ALTER TABLE questions ADD COLUMN model_essay TEXT`);
   }
+  if (!qCols.includes('normalized_content')) {
+    db.exec(`ALTER TABLE questions ADD COLUMN normalized_content TEXT`);
+  }
+  if (!qCols.includes('content_hash')) {
+    db.exec(`ALTER TABLE questions ADD COLUMN content_hash TEXT`);
+  }
+  if (!qCols.includes('review_status')) {
+    db.exec(`ALTER TABLE questions ADD COLUMN review_status TEXT DEFAULT 'approved'`);
+  }
+  if (!qCols.includes('quality_flags')) {
+    db.exec(`ALTER TABLE questions ADD COLUMN quality_flags TEXT`);
+  }
+  if (!qCols.includes('quality_score')) {
+    db.exec(`ALTER TABLE questions ADD COLUMN quality_score REAL`);
+  }
+  if (!qCols.includes('archived_reason')) {
+    db.exec(`ALTER TABLE questions ADD COLUMN archived_reason TEXT`);
+  }
+  if (!qCols.includes('archived_at')) {
+    db.exec(`ALTER TABLE questions ADD COLUMN archived_at TEXT`);
+  }
+  if (!qCols.includes('archived_by')) {
+    db.exec(`ALTER TABLE questions ADD COLUMN archived_by TEXT`);
+  }
 }
 
 // Migration: add grade_level column to subjects if not exists
@@ -180,6 +248,43 @@ if (!subjectCols.includes('grade_level')) {
   if (mathRow && mathERow) {
     db.prepare(`UPDATE questions SET subject_id = ? WHERE grade_level = 'elementary_6' AND subject_id = ?`)
       .run(mathERow.id, mathRow.id);
+  }
+}
+
+// Migration: add exam operation control columns
+{
+  const examCols = db.prepare("PRAGMA table_info(exams)").all().map(c => c.name);
+  if (!examCols.includes('starts_at')) {
+    db.exec(`ALTER TABLE exams ADD COLUMN starts_at TEXT`);
+  }
+  if (!examCols.includes('ends_at')) {
+    db.exec(`ALTER TABLE exams ADD COLUMN ends_at TEXT`);
+  }
+  if (!examCols.includes('access_code')) {
+    db.exec(`ALTER TABLE exams ADD COLUMN access_code TEXT`);
+  }
+  if (!examCols.includes('max_attempts')) {
+    db.exec(`ALTER TABLE exams ADD COLUMN max_attempts INTEGER DEFAULT 0`);
+  }
+  if (!examCols.includes('allow_resume')) {
+    db.exec(`ALTER TABLE exams ADD COLUMN allow_resume INTEGER DEFAULT 1`);
+  }
+}
+
+// Migration: add submission sharing / session columns
+{
+  const subCols = db.prepare("PRAGMA table_info(submissions)").all().map(c => c.name);
+  if (!subCols.includes('lookup_token')) {
+    db.exec(`ALTER TABLE submissions ADD COLUMN lookup_token TEXT`);
+  }
+  if (!subCols.includes('started_at')) {
+    db.exec(`ALTER TABLE submissions ADD COLUMN started_at TEXT`);
+  }
+  if (!subCols.includes('last_seen_at')) {
+    db.exec(`ALTER TABLE submissions ADD COLUMN last_seen_at TEXT`);
+  }
+  if (!subCols.includes('status')) {
+    db.exec(`ALTER TABLE submissions ADD COLUMN status TEXT DEFAULT 'submitted'`);
   }
 }
 
@@ -292,6 +397,77 @@ if (!subjectCols.includes('grade_level')) {
   ).get();
   if (!idxExists) {
     db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_questions_content_unique ON questions(content)`);
+  }
+}
+
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_questions_grade_subject_archived
+  ON questions(grade_level, subject_id, is_archived);
+  CREATE INDEX IF NOT EXISTS idx_questions_content_hash
+  ON questions(content_hash);
+  CREATE INDEX IF NOT EXISTS idx_questions_review_status
+  ON questions(review_status, is_archived);
+  CREATE INDEX IF NOT EXISTS idx_exams_status_window
+  ON exams(status, starts_at, ends_at);
+  CREATE INDEX IF NOT EXISTS idx_submissions_exam_student
+  ON submissions(exam_id, student_name, student_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_submissions_lookup_token
+  ON submissions(lookup_token);
+  CREATE INDEX IF NOT EXISTS idx_admin_sessions_token_exp
+  ON admin_sessions(token_hash, expires_at);
+  CREATE INDEX IF NOT EXISTS idx_question_versions_question
+  ON question_versions(question_id, version_no DESC);
+`);
+
+function hashPassword(password) {
+  const text = String(password || '');
+  return crypto.createHash('sha256').update(text).digest('hex');
+}
+
+{
+  const adminCount = db.prepare(`SELECT COUNT(*) AS c FROM admins`).get().c;
+  if (adminCount === 0) {
+    const username = process.env.ADMIN_USERNAME || 'admin';
+    const password = process.env.ADMIN_PASSWORD || process.env.ADMIN_API_KEY || 'admin1234';
+    db.prepare(`
+      INSERT INTO admins (username, password_hash, display_name, role)
+      VALUES (?, ?, ?, 'super_admin')
+    `).run(username, hashPassword(password), '系統管理員');
+  }
+}
+
+{
+  const rows = db.prepare(`
+    SELECT id, content, correct_count, wrong_count
+    FROM questions
+    WHERE normalized_content IS NULL OR content_hash IS NULL OR review_status IS NULL
+  `).all();
+  if (rows.length) {
+    const update = db.prepare(`
+      UPDATE questions
+      SET normalized_content = ?,
+          content_hash = ?,
+          review_status = COALESCE(review_status, ?),
+          quality_flags = COALESCE(quality_flags, ?),
+          quality_score = COALESCE(quality_score, ?)
+      WHERE id = ?
+    `);
+    const tx = db.transaction((items) => {
+      for (const row of items) {
+        const totalAttempts = (row.correct_count || 0) + (row.wrong_count || 0);
+        const passRate = totalAttempts > 0 ? (row.correct_count || 0) / totalAttempts : null;
+        const needsReview = passRate !== null && totalAttempts >= 10 && (passRate >= 0.95 || passRate <= 0.05);
+        update.run(
+          normalizeQuestionContent(row.content),
+          buildContentHash(row.content),
+          needsReview ? 'needs_review' : 'approved',
+          JSON.stringify(needsReview ? ['pass_rate_outlier'] : []),
+          needsReview ? 80 : 100,
+          row.id
+        );
+      }
+    });
+    tx(rows);
   }
 }
 

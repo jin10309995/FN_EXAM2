@@ -7,84 +7,73 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <style>body{font-family:'Noto Sans TC',sans-serif;}</style>
 </head>
-<body class="bg-gray-50 min-h-screen">
+<body class="bg-slate-50 min-h-screen">
 <header class="bg-indigo-700 text-white py-4 px-6 shadow">
-  <div class="max-w-4xl mx-auto flex items-center gap-3">
-    <a href="/" class="flex items-center gap-1 text-indigo-200 hover:text-white bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors">🏠 首頁</a>
-    <span class="text-lg font-bold">成績查詢</span>
+  <div class="max-w-3xl mx-auto flex items-center gap-3">
+    <a href="/" class="flex items-center gap-1 text-indigo-200 hover:text-white bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors">首頁</a>
+    <span class="text-lg font-bold">個人成績查詢</span>
   </div>
 </header>
-<main class="max-w-4xl mx-auto px-4 py-8">
-  <div class="bg-white rounded-xl shadow p-6 mb-6">
-    <h2 class="font-bold text-gray-700 mb-4">查詢考試成績</h2>
-    <div class="flex gap-3">
-      <select id="exam-select" class="flex-1 border border-gray-300 rounded-lg px-3 py-2">
-        <option value="">請選擇試卷</option>
-      </select>
-      <button onclick="loadSubmissions()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-lg transition-colors">查詢</button>
+<main class="max-w-3xl mx-auto px-4 py-10">
+  <div class="bg-white rounded-2xl shadow-lg p-8 mb-6">
+    <h1 class="text-2xl font-bold text-gray-800 mb-2">輸入查詢碼</h1>
+    <p class="text-sm text-gray-500 mb-6">查詢碼會在繳卷後顯示，也會附在成績頁連結中。</p>
+    <div class="flex flex-col sm:flex-row gap-3">
+      <input id="lookup-token" type="text" class="flex-1 border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="請輸入查詢碼">
+      <button onclick="lookupSubmission()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl font-medium transition-colors">查詢</button>
     </div>
+    <p id="lookup-error" class="hidden mt-4 text-sm text-red-600"></p>
   </div>
-  <div id="submissions-list"></div>
+  <div id="lookup-result" class="hidden bg-white rounded-2xl shadow p-6"></div>
 </main>
 <script>
-async function init() {
-  const res = await fetch('/api/exams');
-  const exams = await res.json();
-  const sel = document.getElementById('exam-select');
-  exams.forEach(e => {
-    const opt = document.createElement('option');
-    opt.value = e.id; opt.textContent = e.title;
-    sel.appendChild(opt);
-  });
-  const params = new URLSearchParams(location.search);
-  if (params.get('exam_id')) { sel.value = params.get('exam_id'); loadSubmissions(); }
-}
+const params = new URLSearchParams(location.search);
+const presetToken = params.get('token') || '';
+if (presetToken) document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('lookup-token').value = presetToken;
+  lookupSubmission();
+});
 
-async function loadSubmissions() {
-  const id = document.getElementById('exam-select').value;
-  if (!id) return;
-  const [subsRes, statsRes] = await Promise.all([
-    fetch('/api/exams/' + id + '/submissions'),
-    fetch('/api/exams/' + id + '/stats')
-  ]);
-  const subs  = await subsRes.json();
-  const stats = await statsRes.json();
-  const pctColor = p => p>=80?'text-green-600':p>=60?'text-yellow-600':'text-red-600';
-
-  document.getElementById('submissions-list').innerHTML = `
-    <div class="grid grid-cols-4 gap-4 mb-6">
-      ${[['參加人數',stats.count+'人'],['平均分',+(stats.avg_pct||0).toFixed(1)+'%'],['最高分',+(stats.max_pct||0).toFixed(1)+'%'],['最低分',+(stats.min_pct||0).toFixed(1)+'%']].map(([l,v])=>
-        `<div class="bg-white rounded-xl shadow p-4 text-center"><p class="text-sm text-gray-500">${l}</p><p class="text-2xl font-bold text-indigo-700 mt-1">${v}</p></div>`
-      ).join('')}
+async function lookupSubmission() {
+  const token = document.getElementById('lookup-token').value.trim();
+  const errorEl = document.getElementById('lookup-error');
+  const resultEl = document.getElementById('lookup-result');
+  errorEl.classList.add('hidden');
+  resultEl.classList.add('hidden');
+  if (!token) {
+    errorEl.textContent = '請輸入查詢碼';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  const res = await fetch(`/api/submissions/lookup?token=${encodeURIComponent(token)}`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    errorEl.textContent = data.error || '查詢失敗';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  const pct = data.total_score > 0 ? Math.round(data.score * 100 / data.total_score) : 0;
+  resultEl.innerHTML = `
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div>
+        <p class="text-sm text-gray-500 mb-1">${escHtml(data.exam_title || '試卷')}</p>
+        <h2 class="text-xl font-bold text-gray-800">${escHtml(data.student_name || '考生')}</h2>
+        <p class="text-sm text-gray-500 mt-1">${escHtml(data.student_id || '未填學號')} · ${escHtml(data.status || '')}</p>
+      </div>
+      <div class="text-right">
+        <p class="text-4xl font-bold ${pct >= 80 ? 'text-green-600' : pct >= 60 ? 'text-amber-600' : 'text-red-600'}">${pct}%</p>
+        <p class="text-sm text-gray-500">${data.score}/${data.total_score} 分</p>
+      </div>
     </div>
-    <div class="bg-white rounded-xl shadow overflow-hidden">
-      <table class="w-full">
-        <thead class="bg-gray-50 text-sm text-gray-500"><tr>
-          <th class="px-4 py-3 text-left">考生姓名</th>
-          <th class="px-4 py-3 text-left">學號</th>
-          <th class="px-4 py-3 text-right">得分</th>
-          <th class="px-4 py-3 text-right">成績</th>
-          <th class="px-4 py-3 text-right">作答時間</th>
-          <th class="px-4 py-3 text-center">詳情</th>
-        </tr></thead>
-        <tbody>
-          ${subs.map(s=>`
-            <tr class="border-b hover:bg-gray-50">
-              <td class="px-4 py-3 font-medium">${escHtml(s.student_name)}</td>
-              <td class="px-4 py-3 text-gray-500">${escHtml(s.student_id||'-')}</td>
-              <td class="px-4 py-3 text-right">${s.score}/${s.total_score}</td>
-              <td class="px-4 py-3 text-right font-bold ${pctColor(s.percentage)}">${s.percentage}%</td>
-              <td class="px-4 py-3 text-right text-gray-400 text-xs">${s.submitted_at}</td>
-              <td class="px-4 py-3 text-center"><a href="/result.html?id=${s.id}" class="text-indigo-600 hover:text-indigo-800 text-sm">查看</a></td>
-            </tr>
-          `).join('')||'<tr><td colspan="6" class="text-center py-8 text-gray-400">尚無成績紀錄</td></tr>'}
-        </tbody>
-      </table>
+    <div class="mt-6 flex flex-wrap gap-3">
+      <a href="/result.html?id=${data.id}&token=${encodeURIComponent(token)}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-lg font-medium transition-colors">查看成績明細</a>
+      <a href="/analysis.html?id=${data.id}&token=${encodeURIComponent(token)}" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2 rounded-lg font-medium transition-colors">查看答題分析</a>
     </div>
   `;
+  resultEl.classList.remove('hidden');
 }
+
 function escHtml(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
-init();
 </script>
 </body>
 </html>

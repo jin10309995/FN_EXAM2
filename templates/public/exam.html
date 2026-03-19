@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>考試作答 - 數理資優班考題系統</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>MathJax = { tex: { inlineMath: [['$','$'],['\\(','\\)']], displayMath: [['$$','$$'],['\\[','\\]']] } };</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" id="MathJax-script" async></script>
+<style>body{font-family:'Noto Sans TC',sans-serif;}</style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+<!-- Registration Modal -->
+<div id="reg-modal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+  <div class="bg-white rounded-2xl p-8 w-full max-w-md mx-4">
+    <h2 class="text-2xl font-bold text-gray-800 mb-6 text-center">填寫考生資料</h2>
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">姓名 <span class="text-red-500">*</span></label>
+        <input id="student-name" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="請輸入真實姓名">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">座號 / 學號</label>
+        <input id="student-id" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="選填">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">試卷存取碼</label>
+        <input id="access-code" type="password" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="若試卷有設定請輸入">
+      </div>
+      <div id="resume-hint" class="hidden text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2"></div>
+    </div>
+    <button onclick="startExam()" class="mt-6 w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-lg font-medium text-lg transition-colors">開始考試</button>
+  </div>
+</div>
+
+<!-- Exam Header -->
+<header class="bg-indigo-700 text-white py-3 px-6 shadow sticky top-0 z-40">
+  <div class="max-w-4xl mx-auto flex justify-between items-center">
+    <div>
+      <span class="font-bold" id="exam-title">載入中...</span>
+      <span class="text-indigo-200 text-sm ml-3" id="progress-text"></span>
+    </div>
+    <div class="flex items-center gap-4">
+      <div id="timer" class="bg-indigo-800 px-4 py-1 rounded-full font-mono text-lg font-bold">--:--</div>
+      <button onclick="confirmSubmit()" class="bg-green-500 hover:bg-green-600 px-4 py-1 rounded-lg font-medium transition-colors">提交作答</button>
+    </div>
+  </div>
+</header>
+
+<main class="max-w-4xl mx-auto px-4 py-6" id="questions-container">
+  <div class="text-center py-16 text-gray-500">載入中...</div>
+</main>
+
+<div class="fixed bottom-0 left-0 right-0 bg-white border-t shadow-lg p-3 z-30">
+  <div class="max-w-4xl mx-auto flex flex-col items-center gap-2" id="question-nav"></div>
+</div>
+
+<script>
+const params = new URLSearchParams(location.search);
+const examId = params.get('id');
+let examData = null;
+let answers = {};
+let timerInterval = null;
+let timeLeft = 0;
+let studentName = '';
+let studentId = '';
+let accessCode = '';
+let currentQuestionIndex = 0;
+let currentSubmissionId = null;
+let currentLookupToken = '';
+let examStartedAt = null;
+let autoSaveTimer = null;
+let saveInFlight = false;
+
+async function loadExam() {
+  const res = await fetch(`/api/public/exams/${examId}/take`);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    const msg = data.error || '試卷不存在或尚未開放';
+    document.getElementById('questions-container').innerHTML = `<p class="text-center py-16 text-red-500">${escHtml(msg)}</p>`;
+    if (!data.requires_access_code) document.getElementById('reg-modal').remove();
+    return;
+  }
+  examData = await res.json();
+  document.getElementById('exam-title').textContent = examData.title;
+  timeLeft = examData.duration_min * 60;
+}
+
+async function startExam() {
+  studentName = document.getElementById('student-name').value.trim();
+  if (!studentName) { alert('請填寫姓名'); return; }
+  studentId = document.getElementById('student-id').value.trim();
+  accessCode = document.getElementById('access-code').value.trim();
+  const res = await fetch(`/api/public/exams/${examId}/session`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      student_name: studentName,
+      student_id: studentId,
+      access_code: accessCode
+    })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    alert(data.error || '無法開始考試');
+    return;
+  }
+  currentSubmissionId = data.submission_id;
+  currentLookupToken = data.lookup_token;
+  examStartedAt = data.started_at || new Date().toISOString();
+  answers = data.answers || {};
+  if (data.resumed) {
+    const hint = document.getElementById('resume-hint');
+    hint.textContent = '已接續先前未完成的作答紀錄，系統會保留你先前的答案。';
+    hint.classList.remove('hidden');
+  }
+  if (examData?.duration_min && examStartedAt) {
+    const elapsed = Math.max(0, Math.floor((Date.now() - new Date(examStartedAt).getTime()) / 1000));
+    timeLeft = Math.max(0, examData.duration_min * 60 - elapsed);
+  }
+  document.getElementById('reg-modal').remove();
+  goToQuestion(0);
+  startTimer();
+  startAutoSave();
+}
+
+const audioPlayCounts = {};
+const AUDIO_MAX_PLAYS = 3;
+
+function renderCurrentQuestion(idx) {
+  const container = document.getElementById('questions-container');
+  const q = examData.questions[idx];
+  const typeLabel = {
+    choice: '選擇題', true_false: '是非題', fill: '填空題', listening: '🎧 聽力',
+    cloze: '📝 段落填空', reading: '📖 閱讀理解', writing: '✍️ 寫作', speaking: '🎤 口說'
+  }[q.type] || q.type;
+  const typeTag = typeLabel ? ` · ${typeLabel}` : '';
+
+  const passageBlock = (q.type === 'reading' && q.passage_content)
+    ? `<div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+        <p class="text-xs text-yellow-700 font-medium mb-2">📖 閱讀文章</p>
+        <div class="text-gray-800 text-sm leading-relaxed whitespace-pre-wrap">${escHtml(q.passage_content)}</div>
+      </div>`
+    : '';
+
+  const imageBlock = q.image_url
+    ? `<div class="mb-3"><img src="${q.image_url}" alt="題目圖片" class="max-h-56 rounded-lg border"></div>`
+    : '';
+
+  container.innerHTML = `${passageBlock}<div id="q-${idx}" class="bg-white rounded-xl shadow p-6">
+    <div class="flex justify-between items-start mb-3">
+      <span class="text-sm font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">第 ${idx+1} 題 · ${q.subject_name} · ${q.score}分${typeTag}</span>
+      <span class="text-xs text-gray-400">${'★'.repeat(q.difficulty || 1)}${'☆'.repeat(5-(q.difficulty||1))}</span>
+    </div>
+    ${q.audio_transcript ? renderTTSPlayer(q, idx) : ''}
+    ${imageBlock}
+    <p class="text-gray-800 mb-4 leading-relaxed">${escHtml(q.content)}</p>
+    ${renderAnswer(q, idx)}
+  </div><div class="h-24"></div>`;
+
+  restoreAnswer(q, idx);
+  if (window.MathJax) MathJax.typesetPromise([container]);
+  updateNavBar();
+}
+
+function restoreAnswer(q, idx) {
+  const val = answers[q.id];
+  if (val === '__dont_know__') {
+    const dkBtn = document.getElementById(`dontknow-${idx}`);
+    if (dkBtn) {
+      dkBtn.classList.remove('border-orange-300','text-orange-600','bg-orange-50');
+      dkBtn.classList.add('bg-orange-400','text-white','border-orange-500');
+    }
+    return;
+  }
+  if (!val) return;
+  if (q.type === 'choice' || q.type === 'reading' || q.type === 'true_false') {
+    const radio = document.querySelector(`input[name="q-${idx}"][value="${val}"]`);
+    if (radio) radio.checked = true;
+  } else if (q.type === 'cloze') {
+    val.split('|').forEach((p, b) => {
+      const el = document.getElementById(`cloze-${idx}-${b}`);
+      if (el) el.value = p;
+    });
+  } else {
+    const el = document.getElementById(`fill-${idx}`);
+    if (el) el.value = val;
+  }
+}
+
+function updateNavBar() {
+  const total = examData.questions.length;
+  const nav = document.getElementById('question-nav');
+  const isFirst = currentQuestionIndex === 0;
+  const isLast  = currentQuestionIndex === total - 1;
+
+  const navBtns = examData.questions.map((q, i) => {
+    const qid = q.id;
+    let cls = 'w-8 h-8 rounded text-xs font-medium border-2 ';
+    if (i === currentQuestionIndex) {
+      cls += 'border-indigo-600 bg-indigo-600 text-white';
+    } else if (answers[qid] === '__dont_know__') {
+      cls += 'border-orange-400 bg-orange-50 text-orange-700';
+    } else if (answers[qid]) {
+      cls += 'border-green-400 bg-green-50 text-green-700';
+    } else {
+      cls += 'border-gray-300 text-gray-600 hover:border-indigo-400';
+    }
+    return `<button id="nav-${i}" onclick="goToQuestion(${i})" class="${cls}">${i+1}</button>`;
+  }).join('');
+
+  nav.innerHTML = `
+    <div class="flex gap-1 flex-wrap justify-center">${navBtns}</div>
+    <div class="flex items-center justify-between w-full max-w-sm gap-4">
+      <button onclick="goToQuestion(${currentQuestionIndex - 1})" ${isFirst ? 'disabled' : ''}
+        class="flex-1 px-5 py-2 rounded-lg border-2 border-gray-300 text-gray-700 text-base font-semibold ${isFirst ? 'opacity-30 cursor-not-allowed' : 'hover:border-indigo-400 hover:text-indigo-600'}">
+        ← 上一題
+      </button>
+      ${isLast
+        ? `<button onclick="confirmSubmit()" class="flex-1 px-5 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-base font-semibold">繳卷 ✓</button>`
+        : `<button onclick="goToQuestion(${currentQuestionIndex + 1})" class="flex-1 px-5 py-2 rounded-lg border-2 border-indigo-500 text-indigo-600 text-base font-semibold hover:bg-indigo-50">下一題 →</button>`
+      }
+    </div>
+  `;
+}
+
+function goToQuestion(idx) {
+  if (idx < 0 || idx >= examData.questions.length) return;
+  currentQuestionIndex = idx;
+  renderCurrentQuestion(idx);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  updateProgress();
+}
+
+function renderAnswer(q, i) {
+  if (q.type === 'choice' || q.type === 'reading') {
+    return renderChoices(q, i);
+  } else if (q.type === 'true_false') {
+    return renderTrueFalse(q, i);
+  } else if (q.type === 'cloze') {
+    return renderCloze(q, i);
+  } else if (q.type === 'writing') {
+    return renderWriting(q, i);
+  } else if (q.type === 'speaking') {
+    return renderSpeaking(q, i);
+  } else {
+    return renderFill(q, i);
+  }
+}
+
+function renderTTSPlayer(q, idx) {
+  const transcript = q.audio_transcript || q.content;
+  return `
+    <div class="bg-green-50 border border-green-200 rounded-lg p-3 mb-4">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-green-700 font-medium text-sm">🔊 請先聆聽題目再作答</span>
+        <span id="play-count-${idx}" class="text-xs text-green-500 ml-auto">已播放：0 / ${AUDIO_MAX_PLAYS} 次</span>
+      </div>
+      <div class="flex gap-2">
+        <button id="play-btn-${idx}" onclick="speakTTS(${idx})"
+          class="flex-1 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium transition-colors">
+          🔊 朗讀題目
+        </button>
+        <button onclick="toggleTranscript(${idx})"
+          class="px-3 py-2 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 text-gray-600 text-sm font-medium transition-colors whitespace-nowrap">
+          👁 顯示文字
+        </button>
+      </div>
+      <div id="transcript-${idx}" class="hidden mt-3 p-3 bg-gray-100 border border-gray-200 rounded-lg">
+        <p class="text-xs text-gray-400 mb-1">📄 朗讀文字內容（輔助提示）</p>
+        <p class="text-gray-700 text-sm leading-relaxed italic">${escHtml(transcript)}</p>
+      </div>
+    </div>
+  `;
+}
+
+function toggleTranscript(idx) {
+  const el  = document.getElementById(`transcript-${idx}`);
+  const btn = el.previousElementSibling.querySelector('button:last-child');
+  if (el.classList.contains('hidden')) {
+    el.classList.remove('hidden');
+    btn.textContent = '🙈 隱藏文字';
+    btn.classList.add('bg-gray-100');
+  } else {
+    el.classList.add('hidden');
+    btn.textContent = '👁 顯示文字';
+    btn.classList.remove('bg-gray-100');
+  }
+}
+
+function speakTTS(idx) {
+  const btn   = document.getElementById(`play-btn-${idx}`);
+  const count = audioPlayCounts[idx] || 0;
+  if (count >= AUDIO_MAX_PLAYS) {
+    alert(`已達播放上限（${AUDIO_MAX_PLAYS} 次），無法再播放`);
+    return;
+  }
+  if (!window.speechSynthesis) {
+    alert('您的瀏覽器不支援語音朗讀功能，請改用 Chrome 或 Edge 瀏覽器');
+    return;
+  }
+  const q    = examData.questions[idx];
+  const text = q.audio_transcript || q.content;
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = 'en-US';
+  utter.rate = 0.85;
+  audioPlayCounts[idx] = count + 1;
+  document.getElementById(`play-count-${idx}`).textContent = `已播放：${audioPlayCounts[idx]} / ${AUDIO_MAX_PLAYS} 次`;
+  if (audioPlayCounts[idx] >= AUDIO_MAX_PLAYS) {
+    btn.textContent = '已達播放上限';
+    btn.disabled = true;
+    btn.classList.replace('bg-green-600', 'bg-gray-400');
+    btn.classList.replace('hover:bg-green-700', 'hover:bg-gray-400');
+  } else {
+    btn.textContent = '播放中...';
+    utter.onend = () => { if (btn && !btn.disabled) btn.textContent = '🔊 再聽一次'; };
+  }
+  window.speechSynthesis.speak(utter);
+}
+
+function renderChoices(q, idx) {
+  return ['A','B','C','D'].map(opt => {
+    const val = q['option_' + opt.toLowerCase()];
+    if (!val) return '';
+    return `<label class="flex items-start gap-3 p-3 rounded-lg border-2 border-transparent hover:border-indigo-200 hover:bg-indigo-50 cursor-pointer mb-2 transition-all">
+      <input type="radio" name="q-${idx}" value="${opt}" onchange="setAnswer(${idx}, '${opt}')" class="mt-0.5 accent-indigo-600">
+      <span class="font-medium text-indigo-700 min-w-4">${opt}.</span>
+      <span class="text-gray-700">${val}</span>
+    </label>`;
+  }).join('') + renderDontKnow(idx);
+}
+
+function renderTrueFalse(q, idx) {
+  return [
+    { value: 'T', label: '是' },
+    { value: 'F', label: '否' }
+  ].map(opt => `<label class="flex items-start gap-3 p-3 rounded-lg border-2 border-transparent hover:border-indigo-200 hover:bg-indigo-50 cursor-pointer mb-2 transition-all">
+      <input type="radio" name="q-${idx}" value="${opt.value}" onchange="setAnswer(${idx}, '${opt.value}')" class="mt-0.5 accent-indigo-600">
+      <span class="font-medium text-indigo-700 min-w-4">${opt.label}</span>
+    </label>`).join('') + renderDontKnow(idx);
+}
+
+function renderFill(q, idx) {
+  return `<input type="text" id="fill-${idx}" placeholder="請填寫答案" onchange="setAnswer(${idx}, this.value)"
+    class="w-full border-2 border-gray-300 focus:border-indigo-500 rounded-lg px-3 py-2 outline-none transition-colors">` + renderDontKnow(idx);
+}
+
+function renderCloze(q, idx) {
+  // Split answer by | to count blanks, render matching number of inputs
+  const blanks = (q.answer || '').split('|').length;
+  const inputs = Array.from({length: blanks}, (_, b) =>
+    `<div class="flex items-center gap-2 mb-2">
+      <span class="text-sm text-gray-500 min-w-12">空格 ${b+1}：</span>
+      <input type="text" id="cloze-${idx}-${b}" placeholder="填入答案"
+        oninput="setClozeAnswer(${idx})"
+        class="flex-1 border-2 border-gray-300 focus:border-indigo-500 rounded-lg px-3 py-2 outline-none transition-colors text-sm">
+    </div>`
+  ).join('');
+  return `<div class="space-y-1">${inputs}</div>` + renderDontKnow(idx);
+}
+
+function setClozeAnswer(idx) {
+  const q = examData.questions[idx];
+  const blanks = (q.answer || '').split('|').length;
+  const parts = Array.from({length: blanks}, (_, b) => {
+    const el = document.getElementById(`cloze-${idx}-${b}`);
+    return el ? el.value.trim() : '';
+  });
+  setAnswer(idx, parts.join('|'));
+}
+
+function renderWriting(q, idx) {
+  return `<div class="space-y-2">
+    <p class="text-sm text-orange-600 bg-orange-50 border border-orange-200 rounded p-2">✍️ 寫作題：請在下方文字框作答，完成後由老師批改。</p>
+    <textarea id="fill-${idx}" rows="6" placeholder="請在此寫下您的答案…"
+      oninput="setAnswer(${idx}, this.value); document.getElementById('wc-${idx}').textContent=this.value.replace(/\\s/g,'').length+'字'"
+      class="w-full border-2 border-gray-300 focus:border-indigo-500 rounded-lg px-3 py-2 outline-none transition-colors resize-y text-sm"></textarea>
+    <div class="text-right text-xs text-gray-400">已輸入 <span id="wc-${idx}">0</span></div>
+  </div>` + renderDontKnow(idx);
+}
+
+function renderSpeaking(q, idx) {
+  return `<div class="space-y-3">
+    <p class="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2">🎤 口說題：請錄音後上傳，或在文字框說明您的答案，由老師批改。</p>
+    <textarea id="fill-${idx}" rows="3" placeholder="（選填）文字補充說明…"
+      oninput="setAnswer(${idx}, this.value)"
+      class="w-full border-2 border-gray-300 focus:border-indigo-500 rounded-lg px-3 py-2 outline-none transition-colors resize-y text-sm"></textarea>
+    <div id="rec-status-${idx}" class="text-sm text-gray-500"></div>
+    ${window.MediaRecorder ? `<div class="flex gap-2">
+      <button type="button" onclick="startRecording(${idx})" id="rec-start-${idx}"
+        class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm rounded-lg transition-colors">🔴 開始錄音</button>
+      <button type="button" onclick="stopRecording(${idx})" id="rec-stop-${idx}" disabled
+        class="px-4 py-2 bg-gray-400 text-white text-sm rounded-lg opacity-50 cursor-not-allowed">⏹ 停止</button>
+    </div>` : '<p class="text-xs text-gray-400">您的瀏覽器不支援錄音功能</p>'}
+  </div>` + renderDontKnow(idx);
+}
+
+function renderDontKnow(idx) {
+  return `<div class="mt-3">
+    <button type="button" id="dontknow-${idx}" onclick="toggleDontKnow(${idx})"
+      class="inline-flex items-center gap-2 px-4 py-2 rounded-lg border-2 border-orange-300 text-orange-600 bg-orange-50 hover:bg-orange-100 transition-colors text-sm font-medium">
+      🤷 我不會
+    </button>
+  </div>`;
+}
+
+function toggleDontKnow(idx) {
+  const qid = examData.questions[idx].id;
+  const btn = document.getElementById(`dontknow-${idx}`);
+  const navBtn = document.getElementById(`nav-${idx}`);
+  if (answers[qid] === '__dont_know__') {
+    // 取消「我不會」
+    delete answers[qid];
+    btn.classList.remove('bg-orange-400','text-white','border-orange-500');
+    btn.classList.add('border-orange-300','text-orange-600','bg-orange-50');
+    navBtn.classList.remove('border-orange-400','bg-orange-50','text-orange-700');
+    navBtn.classList.add('border-gray-300','text-gray-600');
+  } else {
+    // 設定「我不會」，清除其他答案輸入
+    answers[qid] = '__dont_know__';
+    const q = examData.questions[idx];
+    if (q.type === 'choice' || q.type === 'reading' || q.type === 'true_false') {
+      document.querySelectorAll(`input[name="q-${idx}"]`).forEach(r => r.checked = false);
+    } else if (q.type === 'cloze') {
+      const blanks = (q.answer || '').split('|').length;
+      for (let b = 0; b < blanks; b++) {
+        const el = document.getElementById(`cloze-${idx}-${b}`);
+        if (el) el.value = '';
+      }
+    } else {
+      const fillEl = document.getElementById(`fill-${idx}`);
+      if (fillEl) fillEl.value = '';
+    }
+    btn.classList.remove('border-orange-300','text-orange-600','bg-orange-50');
+    btn.classList.add('bg-orange-400','text-white','border-orange-500');
+    navBtn.classList.remove('border-gray-300','text-gray-600','border-green-400','bg-green-50','text-green-700');
+    navBtn.classList.add('border-orange-400','bg-orange-50','text-orange-700');
+  }
+  updateProgress();
+}
+
+function setAnswer(idx, val) {
+  const qid = examData.questions[idx].id;
+  answers[qid] = val;
+  // 若重新作答，取消「我不會」狀態
+  const dkBtn = document.getElementById(`dontknow-${idx}`);
+  if (dkBtn) {
+    dkBtn.classList.remove('bg-orange-400','text-white','border-orange-500');
+    dkBtn.classList.add('border-orange-300','text-orange-600','bg-orange-50');
+  }
+  const btn = document.getElementById(`nav-${idx}`);
+  btn.classList.remove('border-gray-300','text-gray-600','border-orange-400','bg-orange-50','text-orange-700');
+  btn.classList.add('border-green-400','bg-green-50','text-green-700');
+  updateProgress();
+}
+
+// ── Speaking recording ────────────────────────────────────────────────────
+const recorders = {};
+async function startRecording(idx) {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mr = new MediaRecorder(stream);
+    const chunks = [];
+    mr.ondataavailable = e => chunks.push(e.data);
+    mr.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      const blob = new Blob(chunks, { type: 'audio/webm' });
+      const fd = new FormData();
+      fd.append('audio', blob, `speaking_${idx}.webm`);
+      document.getElementById(`rec-status-${idx}`).textContent = '上傳中…';
+      try {
+        const r = await fetch('/api/public/audio/upload', { method: 'POST', body: fd });
+        const j = await r.json();
+        if (j.audio_url) {
+          setAnswer(idx, '__speaking_audio__:' + j.audio_url);
+          document.getElementById(`rec-status-${idx}`).innerHTML = `✅ 錄音上傳成功：<a href="${j.audio_url}" target="_blank" class="text-blue-500 underline">聆聽</a>`;
+        } else { document.getElementById(`rec-status-${idx}`).textContent = '上傳失敗：' + (j.error||'未知'); }
+      } catch(e) { document.getElementById(`rec-status-${idx}`).textContent = '上傳失敗：' + e.message; }
+    };
+    recorders[idx] = mr;
+    mr.start();
+    document.getElementById(`rec-start-${idx}`).disabled = true;
+    document.getElementById(`rec-start-${idx}`).classList.replace('bg-red-600','bg-gray-400');
+    document.getElementById(`rec-stop-${idx}`).disabled = false;
+    document.getElementById(`rec-stop-${idx}`).classList.remove('opacity-50','cursor-not-allowed');
+    document.getElementById(`rec-status-${idx}`).textContent = '🔴 錄音中…';
+  } catch(e) { alert('無法啟動錄音：' + e.message); }
+}
+function stopRecording(idx) {
+  if (recorders[idx]) { recorders[idx].stop(); recorders[idx] = null; }
+  document.getElementById(`rec-stop-${idx}`).disabled = true;
+  document.getElementById(`rec-stop-${idx}`).classList.add('opacity-50','cursor-not-allowed');
+}
+
+function scrollToQ(idx) { goToQuestion(idx); }
+
+function updateProgress() {
+  const answered = Object.keys(answers).length;
+  document.getElementById('progress-text').textContent = `已作答 ${answered}/${examData.questions.length} 題`;
+}
+
+function startAutoSave() {
+  if (autoSaveTimer) clearInterval(autoSaveTimer);
+  autoSaveTimer = setInterval(() => {
+    saveProgress(false);
+  }, 15000);
+}
+
+async function saveProgress(force = false) {
+  if (!currentSubmissionId || !currentLookupToken || saveInFlight) return true;
+  if (!force && !Object.keys(answers).length) return true;
+  saveInFlight = true;
+  try {
+    const res = await fetch(`/api/public/submissions/${currentSubmissionId}/progress`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        lookup_token: currentLookupToken,
+        answers
+      })
+    });
+    if (!res.ok && force) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || '儲存作答進度失敗');
+      return false;
+    }
+    return res.ok;
+  } finally {
+    saveInFlight = false;
+  }
+}
+
+function startTimer() {
+  const el = document.getElementById('timer');
+  const render = () => {
+    const m = Math.floor(timeLeft / 60).toString().padStart(2,'0');
+    const s = (timeLeft % 60).toString().padStart(2,'0');
+    el.textContent = `${m}:${s}`;
+  };
+  render();
+  timerInterval = setInterval(() => {
+    timeLeft--;
+    render();
+    if (timeLeft <= 300) el.classList.add('text-yellow-300');
+    if (timeLeft <= 60)  el.classList.replace('text-yellow-300','text-red-300');
+    if (timeLeft <= 0)   { clearInterval(timerInterval); submitAnswers(); }
+  }, 1000);
+}
+
+function confirmSubmit() {
+  if (confirm('確定要提交作答嗎？')) submitAnswers();
+}
+
+async function submitAnswers() {
+  clearInterval(timerInterval);
+  if (autoSaveTimer) clearInterval(autoSaveTimer);
+  const saved = await saveProgress(true);
+  if (!saved) return;
+  const res = await fetch(`/api/exams/${examId}/submit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      student_name: studentName,
+      student_id: studentId,
+      answers,
+      access_code: accessCode,
+      submission_id: currentSubmissionId,
+      lookup_token: currentLookupToken
+    })
+  });
+  const data = await res.json();
+  if (data.submission_id) {
+    location.href = `/result.html?id=${data.submission_id}&token=${encodeURIComponent(data.lookup_token)}`;
+  } else {
+    alert('提交失敗：' + (data.error || '未知錯誤'));
+  }
+}
+
+function escHtml(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+window.addEventListener('beforeunload', () => {
+  if (currentSubmissionId && currentLookupToken && Object.keys(answers).length) {
+    navigator.sendBeacon?.(
+      `/api/public/submissions/${currentSubmissionId}/progress`,
+      new Blob([JSON.stringify({ lookup_token: currentLookupToken, answers })], { type: 'application/json' })
+    );
+  }
+});
+loadExam();
+</script>
+</body>
+</html>

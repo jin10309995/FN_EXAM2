@@ -24,6 +24,11 @@
         <label class="block text-sm font-medium text-gray-700 mb-1">座號 / 學號</label>
         <input id="student-id" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="選填">
       </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">試卷存取碼</label>
+        <input id="access-code" type="password" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="若試卷有設定請輸入">
+      </div>
+      <div id="resume-hint" class="hidden text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2"></div>
     </div>
     <button onclick="startExam()" class="mt-6 w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-lg font-medium text-lg transition-colors">開始考試</button>
   </div>
@@ -60,23 +65,64 @@ let timerInterval = null;
 let timeLeft = 0;
 let studentName = '';
 let studentId = '';
+let accessCode = '';
 let currentQuestionIndex = 0;
+let currentSubmissionId = null;
+let currentLookupToken = '';
+let examStartedAt = null;
+let autoSaveTimer = null;
+let saveInFlight = false;
 
 async function loadExam() {
-  const res = await fetch(`/api/exams/${examId}/take`);
-  if (!res.ok) { document.getElementById('questions-container').innerHTML = '<p class="text-center py-16 text-red-500">試卷不存在或尚未開放</p>'; document.getElementById('reg-modal').remove(); return; }
+  const res = await fetch(`/api/public/exams/${examId}/take`);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    const msg = data.error || '試卷不存在或尚未開放';
+    document.getElementById('questions-container').innerHTML = `<p class="text-center py-16 text-red-500">${escHtml(msg)}</p>`;
+    if (!data.requires_access_code) document.getElementById('reg-modal').remove();
+    return;
+  }
   examData = await res.json();
   document.getElementById('exam-title').textContent = examData.title;
   timeLeft = examData.duration_min * 60;
 }
 
-function startExam() {
+async function startExam() {
   studentName = document.getElementById('student-name').value.trim();
   if (!studentName) { alert('請填寫姓名'); return; }
   studentId = document.getElementById('student-id').value.trim();
+  accessCode = document.getElementById('access-code').value.trim();
+  const res = await fetch(`/api/public/exams/${examId}/session`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      student_name: studentName,
+      student_id: studentId,
+      access_code: accessCode
+    })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    alert(data.error || '無法開始考試');
+    return;
+  }
+  currentSubmissionId = data.submission_id;
+  currentLookupToken = data.lookup_token;
+  examStartedAt = data.started_at || new Date().toISOString();
+  answers = data.answers || {};
+  if (data.resumed) {
+    const hint = document.getElementById('resume-hint');
+    hint.textContent = '已接續先前未完成的作答紀錄，系統會保留你先前的答案。';
+    hint.classList.remove('hidden');
+  }
+  if (examData?.duration_min && examStartedAt) {
+    const elapsed = Math.max(0, Math.floor((Date.now() - new Date(examStartedAt).getTime()) / 1000));
+    timeLeft = Math.max(0, examData.duration_min * 60 - elapsed);
+  }
   document.getElementById('reg-modal').remove();
   goToQuestion(0);
   startTimer();
+  startAutoSave();
 }
 
 const audioPlayCounts = {};
@@ -425,7 +471,7 @@ async function startRecording(idx) {
       fd.append('audio', blob, `speaking_${idx}.webm`);
       document.getElementById(`rec-status-${idx}`).textContent = '上傳中…';
       try {
-        const r = await fetch('/api/audio/upload', { method: 'POST', body: fd });
+        const r = await fetch('/api/public/audio/upload', { method: 'POST', body: fd });
         const j = await r.json();
         if (j.audio_url) {
           setAnswer(idx, '__speaking_audio__:' + j.audio_url);
@@ -455,13 +501,48 @@ function updateProgress() {
   document.getElementById('progress-text').textContent = `已作答 ${answered}/${examData.questions.length} 題`;
 }
 
+function startAutoSave() {
+  if (autoSaveTimer) clearInterval(autoSaveTimer);
+  autoSaveTimer = setInterval(() => {
+    saveProgress(false);
+  }, 15000);
+}
+
+async function saveProgress(force = false) {
+  if (!currentSubmissionId || !currentLookupToken || saveInFlight) return true;
+  if (!force && !Object.keys(answers).length) return true;
+  saveInFlight = true;
+  try {
+    const res = await fetch(`/api/public/submissions/${currentSubmissionId}/progress`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        lookup_token: currentLookupToken,
+        answers
+      })
+    });
+    if (!res.ok && force) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || '儲存作答進度失敗');
+      return false;
+    }
+    return res.ok;
+  } finally {
+    saveInFlight = false;
+  }
+}
+
 function startTimer() {
-  timerInterval = setInterval(() => {
-    timeLeft--;
+  const el = document.getElementById('timer');
+  const render = () => {
     const m = Math.floor(timeLeft / 60).toString().padStart(2,'0');
     const s = (timeLeft % 60).toString().padStart(2,'0');
-    const el = document.getElementById('timer');
     el.textContent = `${m}:${s}`;
+  };
+  render();
+  timerInterval = setInterval(() => {
+    timeLeft--;
+    render();
     if (timeLeft <= 300) el.classList.add('text-yellow-300');
     if (timeLeft <= 60)  el.classList.replace('text-yellow-300','text-red-300');
     if (timeLeft <= 0)   { clearInterval(timerInterval); submitAnswers(); }
@@ -474,20 +555,38 @@ function confirmSubmit() {
 
 async function submitAnswers() {
   clearInterval(timerInterval);
+  if (autoSaveTimer) clearInterval(autoSaveTimer);
+  const saved = await saveProgress(true);
+  if (!saved) return;
   const res = await fetch(`/api/exams/${examId}/submit`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ student_name: studentName, student_id: studentId, answers })
+    body: JSON.stringify({
+      student_name: studentName,
+      student_id: studentId,
+      answers,
+      access_code: accessCode,
+      submission_id: currentSubmissionId,
+      lookup_token: currentLookupToken
+    })
   });
   const data = await res.json();
   if (data.submission_id) {
-    location.href = `/result.html?id=${data.submission_id}`;
+    location.href = `/result.html?id=${data.submission_id}&token=${encodeURIComponent(data.lookup_token)}`;
   } else {
     alert('提交失敗：' + (data.error || '未知錯誤'));
   }
 }
 
 function escHtml(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+window.addEventListener('beforeunload', () => {
+  if (currentSubmissionId && currentLookupToken && Object.keys(answers).length) {
+    navigator.sendBeacon?.(
+      `/api/public/submissions/${currentSubmissionId}/progress`,
+      new Blob([JSON.stringify({ lookup_token: currentLookupToken, answers })], { type: 'application/json' })
+    );
+  }
+});
 loadExam();
 </script>
 </body>

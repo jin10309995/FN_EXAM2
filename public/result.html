@@ -20,7 +20,9 @@
   <div class="text-center py-16 text-gray-500">載入中...</div>
 </main>
 <script>
-const id = new URLSearchParams(location.search).get('id');
+const params = new URLSearchParams(location.search);
+const id = params.get('id');
+const token = params.get('token');
 function getOptionLabel(q, letter) {
   if (!letter) return '（未作答）';
   if (q.type === 'true_false') return letter.toUpperCase() === 'T' ? '是' : '否';
@@ -30,7 +32,16 @@ function getOptionLabel(q, letter) {
 }
 function escHtml(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 async function loadResult() {
-  const res = await fetch('/api/submissions/' + id);
+  if (!id || !token) {
+    document.getElementById('result-container').innerHTML = '<p class="text-center py-16 text-red-500">缺少成績查詢參數</p>';
+    return;
+  }
+  const res = await fetch(`/api/submissions/${id}?token=${encodeURIComponent(token)}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    document.getElementById('result-container').innerHTML = `<p class="text-center py-16 text-red-500">${escHtml(err.error || '找不到成績資料')}</p>`;
+    return;
+  }
   const data = await res.json();
   const pct = Math.round(data.score / data.total_score * 100);
   const color = pct >= 80 ? 'text-green-600' : pct >= 60 ? 'text-yellow-600' : 'text-red-600';
@@ -76,7 +87,8 @@ async function loadResult() {
     </div>
     <div class="mt-6 text-center flex gap-4 justify-center">
       <a href="/exam-list.html" class="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3 rounded-lg font-medium transition-colors">返回考試列表</a>
-      <a href="/analysis.html?id=${id}" class="bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-3 rounded-lg font-medium transition-colors">📊 查看答題分析報告</a>
+      <a href="/analysis.html?id=${id}&token=${encodeURIComponent(token)}" class="bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-3 rounded-lg font-medium transition-colors">📊 查看答題分析報告</a>
+      <a href="/results.html?token=${encodeURIComponent(token)}" class="bg-gray-600 hover:bg-gray-700 text-white px-8 py-3 rounded-lg font-medium transition-colors">查詢碼頁面</a>
     </div>
   `;
   if (window.MathJax) MathJax.typesetPromise([document.getElementById('result-container')]);
