@@ -59,29 +59,42 @@ async function ensureStudentSession() {
 }
 
 async function loadExams() {
-  const res = await fetch('/api/exams');
-  const exams = await res.json();
-  const active = exams.filter(e => e.status === 'active');
   const container = document.getElementById('exam-list');
-  if (!active.length) {
-    container.innerHTML = '<div class="bg-white rounded-xl shadow p-6 text-center text-gray-500">目前沒有開放中的考試</div>';
-    return;
-  }
-  container.innerHTML = active.map(e => `
-    <div class="bg-white rounded-xl shadow p-6 border border-gray-100 flex flex-col gap-4 lg:flex-row lg:justify-between lg:items-center">
-      <div>
-        <h3 class="text-lg font-bold text-gray-800">${escHtml(e.title)}</h3>
-        <p class="text-sm text-gray-500 mt-1">${escHtml(e.description || '')}</p>
-        <div class="flex gap-4 mt-2 text-sm text-gray-600 flex-wrap">
-          <span>📋 ${e.question_count} 題</span>
-          <span>⏱ ${e.duration_min} 分鐘</span>
-          <span>💯 滿分 ${e.total_score} 分</span>
-          ${e.writing_count > 0 ? `<span class="text-orange-600">✍️ 含寫作（人工批改）</span>` : ''}
+  try {
+    const res = await fetch('/api/public/exams', { credentials: 'same-origin' });
+    if (res.status === 401 || res.status === 403) {
+      redirectToStudentLogin();
+      return;
+    }
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const payload = await res.json();
+    const exams = Array.isArray(payload) ? payload : [];
+    const active = exams.filter(e => e.status === 'active');
+    if (!active.length) {
+      container.innerHTML = '<div class="bg-white rounded-xl shadow p-6 text-center text-gray-500">目前沒有開放中的考試</div>';
+      return;
+    }
+    container.innerHTML = active.map(e => `
+      <div class="bg-white rounded-xl shadow p-6 border border-gray-100 flex flex-col gap-4 lg:flex-row lg:justify-between lg:items-center">
+        <div>
+          <h3 class="text-lg font-bold text-gray-800">${escHtml(e.title)}</h3>
+          <p class="text-sm text-gray-500 mt-1">${escHtml(e.description || '')}</p>
+          <div class="flex gap-4 mt-2 text-sm text-gray-600 flex-wrap">
+            <span>📋 ${e.question_count} 題</span>
+            <span>⏱ ${e.duration_min} 分鐘</span>
+            <span>💯 滿分 ${e.total_score} 分</span>
+            ${e.writing_count > 0 ? `<span class="text-orange-600">✍️ 含寫作（人工批改）</span>` : ''}
+          </div>
         </div>
+        <a href="/exam.html?id=${e.id}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-lg font-medium transition-colors text-center">開始作答</a>
       </div>
-      <a href="/exam.html?id=${e.id}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-lg font-medium transition-colors text-center">開始作答</a>
-    </div>
-  `).join('');
+    `).join('');
+  } catch (err) {
+    console.error('Failed to load exams', err);
+    container.innerHTML = '<div class="bg-white rounded-xl shadow p-6 text-center text-red-500">考題載入失敗，請重新整理後再試</div>';
+  }
 }
 async function logoutStudent() {
   try {

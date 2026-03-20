@@ -6,69 +6,369 @@
 <title>登入 - 數理資優班考題系統</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
-<style>body{font-family:'Noto Sans TC',sans-serif;}</style>
+<link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;500;700;800&family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+* { box-sizing: border-box; }
+html, body { min-height: 100%; }
+body {
+  margin: 0;
+  font-family: 'M PLUS Rounded 1c', 'Noto Sans TC', sans-serif;
+  color: #18302b;
+}
+.hidden { display: none !important; }
+
+.login-scene {
+  min-height: 100vh;
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 14% 14%, rgba(99, 102, 241, 0.24), transparent 34%),
+    radial-gradient(circle at 86% 10%, rgba(56, 189, 248, 0.22), transparent 32%),
+    radial-gradient(circle at 10% 88%, rgba(129, 140, 248, 0.18), transparent 30%),
+    radial-gradient(circle at 88% 84%, rgba(14, 165, 233, 0.16), transparent 30%),
+    linear-gradient(145deg, #eef2ff 0%, #f8fafc 60%, #ecfeff 100%);
+}
+
+.bg-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+.blob {
+  position: absolute;
+  border-radius: 48% 52% 45% 55% / 44% 52% 48% 56%;
+}
+.blob-1 {
+  width: 54vw;
+  height: 58vh;
+  left: -12vw;
+  top: -16vh;
+  background: rgba(99, 102, 241, 0.26);
+}
+.blob-2 {
+  width: 44vw;
+  height: 44vh;
+  right: -12vw;
+  top: -10vh;
+  background: rgba(56, 189, 248, 0.24);
+}
+.blob-3 {
+  width: 48vw;
+  height: 54vh;
+  left: -10vw;
+  bottom: -20vh;
+  background: rgba(147, 197, 253, 0.22);
+}
+.blob-4 {
+  width: 42vw;
+  height: 46vh;
+  right: -8vw;
+  bottom: -14vh;
+  background: rgba(129, 140, 248, 0.20);
+}
+.blob-5 {
+  width: 52vw;
+  height: 40vh;
+  left: 24vw;
+  top: 12vh;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.curve {
+  position: absolute;
+  border: 2px solid rgba(129, 140, 248, 0.35);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.curve-1 {
+  width: 130vw;
+  height: 58vh;
+  left: -18vw;
+  top: 18vh;
+  border-top-color: rgba(129, 140, 248, 0.42);
+  border-left-color: transparent;
+  border-right-color: transparent;
+  border-bottom-color: rgba(129, 140, 248, 0.42);
+}
+.curve-2 {
+  width: 88vw;
+  height: 50vh;
+  right: -26vw;
+  top: -12vh;
+  border-top-color: rgba(56, 189, 248, 0.4);
+  border-left-color: rgba(56, 189, 248, 0.4);
+  border-right-color: transparent;
+  border-bottom-color: transparent;
+}
+
+.dot {
+  position: absolute;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+}
+.dot-1 { width: 48px; height: 62px; left: 7%; top: 16%; transform: rotate(-20deg); }
+.dot-2 { width: 26px; height: 22px; left: 24%; top: 33%; transform: rotate(-12deg); }
+.dot-3 { width: 30px; height: 36px; right: 11%; top: 17%; transform: rotate(8deg); }
+.dot-4 { width: 24px; height: 30px; right: 20%; bottom: 24%; transform: rotate(30deg); }
+.dot-5 { width: 34px; height: 24px; left: 2%; bottom: 10%; transform: rotate(26deg); }
+
+.login-main {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  padding: 24px 16px;
+  overflow: auto;
+}
+.login-shell {
+  position: relative;
+  width: min(560px, calc(100vw - 34px));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 0 auto;
+}
+
+.brand-block {
+  text-align: center;
+  margin-bottom: 14px;
+}
+.brand-logo {
+  width: 182px;
+  height: 182px;
+  margin: 0 auto 8px;
+  border-radius: 999px;
+  background: linear-gradient(155deg, #f5f9ff 0%, #ffffff 100%);
+  border: 3px solid #60a5fa;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 10px 24px rgba(30, 58, 138, 0.14);
+}
+.brand-logo-inner {
+  width: 150px;
+  height: 150px;
+  display: grid;
+  place-items: center;
+}
+.brand-emblem {
+  width: 132px;
+  height: 132px;
+}
+.brand-subtitle {
+  margin: 8px 0 0;
+  font-family: 'M PLUS Rounded 1c', 'Noto Sans TC', sans-serif;
+  font-size: clamp(30px, 4.5vw, 42px);
+  color: #334155;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-shadow: 0 3px 0 rgba(255, 255, 255, 0.62);
+}
+
+.login-card {
+  width: 100%;
+  border-radius: 16px;
+  padding: 30px 30px 28px;
+  background: rgba(255, 255, 255, 0.84);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  box-shadow: 0 20px 38px rgba(56, 74, 118, 0.16);
+  backdrop-filter: blur(3px);
+}
+
+.role-hint {
+  margin: 0 0 18px;
+  text-align: center;
+  color: #334155;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.form-row > label {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1f2937;
+}
+.input-wrap {
+  position: relative;
+}
+.field-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 18px;
+  opacity: 0.8;
+}
+.input-wrap > input {
+  width: 100%;
+  height: 62px;
+  border: 1px solid #a9b8d6;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.86);
+  padding: 0 12px 0 40px;
+  font-size: 20px;
+  color: #0f172a;
+  outline: none;
+}
+.input-wrap > input:focus {
+  border-color: #4f46e5;
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.16);
+}
+
+.login-error {
+  margin: 2px 0 10px;
+  padding-left: 2px;
+  color: #bb2e42;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.login-btn {
+  width: 100%;
+  height: 56px;
+  border: 0;
+  border-radius: 8px;
+  background: #1f4dd8;
+  color: #fff;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: background-color .2s ease, transform .14s ease;
+}
+.login-btn:hover { background: #1d43bb; }
+.login-btn:active { transform: translateY(1px); }
+
+.footer-note {
+  margin: 18px 0 0;
+  text-align: center;
+  color: rgba(51, 65, 85, 0.75);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+@media (max-width: 640px) {
+  .brand-logo { width: 126px; height: 126px; }
+  .brand-logo-inner { width: 108px; height: 108px; }
+  .brand-emblem { width: 92px; height: 92px; }
+  .brand-subtitle { font-size: 28px; }
+  .login-card { padding: 24px 16px 20px; }
+  .form-row { grid-template-columns: 56px 1fr; gap: 8px; margin-bottom: 12px; }
+  .form-row > label { font-size: 20px; }
+  .role-hint { font-size: 16px; }
+  .input-wrap > input { height: 52px; font-size: 17px; }
+  .login-btn { height: 50px; font-size: 22px; }
+  .footer-note { font-size: 13px; }
+}
+
+</style>
 </head>
-<body class="min-h-screen bg-[radial-gradient(circle_at_top,_#eefbf5_0%,_#eef2ff_50%,_#f8fafc_100%)] text-slate-800">
-<main class="mx-auto flex min-h-screen max-w-6xl items-center px-4 py-10">
-  <div class="grid w-full overflow-hidden rounded-[2rem] border border-white/80 bg-white/85 shadow-2xl backdrop-blur lg:grid-cols-[1.05fr_0.95fr]">
-    <section class="bg-[linear-gradient(135deg,#0f766e_0%,#2563eb_100%)] px-8 py-10 text-white sm:px-10">
-      <p class="inline-flex rounded-full bg-white/15 px-4 py-1 text-sm font-medium tracking-[0.18em]">UNIFIED LOGIN</p>
-      <h1 class="mt-6 text-4xl font-black tracking-tight sm:text-5xl">先登入，再分流</h1>
-      <p class="mt-4 max-w-xl text-sm leading-7 text-cyan-50">不需要先選老師或學生。輸入帳號密碼後，系統會依登入身份自動導向對應畫面。</p>
-      <div class="mt-8 grid gap-4 sm:grid-cols-2">
-        <div class="rounded-3xl bg-white/12 p-5 ring-1 ring-white/20">
-          <div class="text-3xl">👨‍🎓</div>
-          <div class="mt-3 text-lg font-bold">學生</div>
-          <p class="mt-2 text-sm leading-6 text-cyan-50">登入後進入學生首頁，可參加考試、查詢成績與分析。</p>
-        </div>
-        <div class="rounded-3xl bg-white/12 p-5 ring-1 ring-white/20">
-          <div class="text-3xl">🧑‍🏫</div>
-          <div class="mt-3 text-lg font-bold">老師</div>
-          <p class="mt-2 text-sm leading-6 text-cyan-50">登入後進入老師首頁，可管理題庫、試卷、統計與 AI 出題。</p>
+<body class="login-scene">
+<div class="bg-layer" aria-hidden="true">
+  <span class="blob blob-1"></span>
+  <span class="blob blob-2"></span>
+  <span class="blob blob-3"></span>
+  <span class="blob blob-4"></span>
+  <span class="blob blob-5"></span>
+  <span class="curve curve-1"></span>
+  <span class="curve curve-2"></span>
+  <span class="dot dot-1"></span>
+  <span class="dot dot-2"></span>
+  <span class="dot dot-3"></span>
+  <span class="dot dot-4"></span>
+  <span class="dot dot-5"></span>
+</div>
+
+<main class="login-main">
+  <div class="login-shell">
+    <header class="brand-block">
+      <div class="brand-logo" aria-hidden="true">
+        <div id="brand-logo-inner" class="brand-logo-inner"></div>
+      </div>
+      <p class="brand-subtitle">數理資優班考題系統</p>
+    </header>
+
+    <section class="login-card" aria-label="登入表單">
+      <p id="role-hint" class="role-hint">登入成功後，系統會自動判斷你是老師或學生。</p>
+
+      <div class="form-row">
+        <label for="username">帳號</label>
+        <div class="input-wrap">
+          <span class="field-icon" aria-hidden="true">👤</span>
+          <input id="username" type="text" placeholder="請輸入帳號">
         </div>
       </div>
-      <div class="mt-8 rounded-3xl bg-black/15 px-5 py-4 text-sm text-cyan-50 ring-1 ring-white/10">
-        預設示範帳號可在 `.env` 設定：
-        `ADMIN_USERNAME` / `ADMIN_PASSWORD`
-        與 `STUDENT_USERNAME` / `STUDENT_PASSWORD`
+
+      <div class="form-row">
+        <label for="password">密碼</label>
+        <div class="input-wrap">
+          <span class="field-icon" aria-hidden="true">🔒</span>
+          <input id="password" type="password" placeholder="請輸入密碼">
+        </div>
       </div>
+
+      <p id="login-error" class="login-error hidden"></p>
+      <button onclick="login()" class="login-btn">登入</button>
     </section>
 
-    <section class="px-8 py-10 sm:px-10">
-      <div class="mx-auto w-full max-w-md">
-        <a href="/login.html" class="inline-flex rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-600">登入首頁</a>
-        <div class="mt-6">
-          <h2 class="text-3xl font-black text-slate-900">帳號登入</h2>
-          <p id="role-hint" class="mt-2 text-sm text-slate-500">登入成功後，系統會自動判斷你是老師或學生。</p>
-        </div>
-
-        <div class="mt-8 space-y-4">
-          <div>
-            <label class="mb-1 block text-sm font-medium text-slate-700">帳號</label>
-            <input id="username" type="text" class="w-full rounded-2xl border border-slate-300 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="請輸入帳號">
-          </div>
-          <div>
-            <label class="mb-1 block text-sm font-medium text-slate-700">密碼</label>
-            <input id="password" type="password" class="w-full rounded-2xl border border-slate-300 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="請輸入密碼">
-          </div>
-          <p id="login-error" class="hidden text-sm text-rose-600"></p>
-          <button onclick="login()" class="w-full rounded-2xl bg-slate-900 px-4 py-3 font-medium text-white transition hover:bg-slate-800">登入系統</button>
-        </div>
-      </div>
-    </section>
+    <p class="footer-note">本系統建議使用 Google Chrome 或 Microsoft Edge 瀏覽器。</p>
   </div>
 </main>
 <script>
 const params = new URLSearchParams(location.search);
 const role = params.get('role') || '';
 const returnTo = params.get('return_to') || '';
+const BRUSH_GOLD_LOGO = `<svg class="brand-emblem" viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="wcBrushGold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fde68a"/>
+      <stop offset="1" stop-color="#b45309"/>
+    </linearGradient>
+    <linearGradient id="wcBrushGoldMetal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fff7ed"/>
+      <stop offset="1" stop-color="#f59e0b"/>
+    </linearGradient>
+    <linearGradient id="wcBrushGoldHair" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#374151"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <linearGradient id="wcBrushGoldShade" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#7c2d12" stop-opacity=".22"/>
+      <stop offset="1" stop-color="#fff7ed" stop-opacity=".32"/>
+    </linearGradient>
+  </defs>
+  <path d="M26 124q36-26 75-16" stroke="#5b3110" stroke-width="10" stroke-linecap="round" opacity=".9"/>
+  <path d="M30 132q30-18 56-12" stroke="#78350f" stroke-width="6" stroke-linecap="round" opacity=".5"/>
+  <g transform="rotate(35 86 70)">
+    <rect x="74" y="14" width="12" height="86" rx="6" fill="url(#wcBrushGold)"/>
+    <rect x="76.2" y="18" width="3.2" height="78" rx="1.6" fill="url(#wcBrushGoldShade)"/>
+    <rect x="71" y="94" width="18" height="18" rx="3.6" fill="url(#wcBrushGoldMetal)" stroke="#b45309" stroke-width="1"/>
+    <path d="M74 111h12l-1.2 11c-.9 7-5 13-10.8 17l-1 0.7-1-.7c-5.8-4-9.9-10-10.8-17z" fill="url(#wcBrushGoldHair)"/>
+    <path d="M73 116c-.8 5.5-3.6 11.2-9.8 16.2 6.8-2.7 11.9-6.2 15.6-11.8 1.4-2.2 2.3-4.4 2.6-6.8z" fill="#000" opacity=".25"/>
+    <ellipse cx="80" cy="10" rx="6.5" ry="8.5" fill="#fbbf24" stroke="#92400e" stroke-width="2"/>
+  </g>
+  <text x="80" y="152" text-anchor="middle" font-size="21" font-weight="700" fill="#78350f" font-family="'Noto Sans TC','Microsoft JhengHei',sans-serif">文昌魁筆</text>
+</svg>`;
+
+function renderBrushLogo() {
+  const host = document.getElementById('brand-logo-inner');
+  if (!host) return;
+  host.innerHTML = BRUSH_GOLD_LOGO;
+}
 
 if (role === 'student') {
   document.getElementById('role-hint').textContent = '登入學生帳號後，會自動進入選擇考題。';
 } else if (role === 'teacher') {
   document.getElementById('role-hint').textContent = '登入老師帳號後，會自動進入老師首頁。';
 }
+renderBrushLogo();
 
 function toSafeRedirectPath(rawUrl) {
   if (!rawUrl) return '';
