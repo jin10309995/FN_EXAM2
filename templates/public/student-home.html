@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>學生首頁 - 數理資優班考題系統</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+html{overflow-y:scroll;}
+body{font-family:'Noto Sans TC',sans-serif;}
+.top-nav-btn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  height:36px;
+  line-height:1;
+  box-sizing:border-box;
+  white-space:nowrap;
+}
+.tab-btn{transition:all .2s;}
+.tab-btn.active{background:#4338ca;color:#fff;}
+</style>
+</head>
+<body class="bg-gray-100 min-h-screen text-slate-800">
+<header class="bg-indigo-700 text-white py-4 px-6 shadow sticky top-0 z-50">
+  <div class="max-w-7xl mx-auto flex items-center gap-4">
+    <a href="/exam-list.html" class="top-nav-btn text-white hover:text-white bg-white/10 hover:bg-white/20 border border-white/30 px-4 py-1.5 rounded-lg text-sm font-medium transition-colors">🎓 學生首頁</a>
+    <div class="flex gap-2 flex-wrap items-center">
+      <a href="/exam-list.html" class="tab-btn top-nav-btn px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30 text-indigo-200 hover:text-white hover:bg-white/10">📝 選擇考題</a>
+      <a href="/results.html" class="tab-btn top-nav-btn px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30 text-indigo-200 hover:text-white hover:bg-white/10">📊 成績查詢</a>
+    </div>
+    <div class="ml-auto flex items-center gap-2">
+      <div id="student-badge" class="rounded-lg bg-white/10 px-3 py-1 text-sm text-indigo-50"></div>
+      <button onclick="logoutStudent()" class="top-nav-btn px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30 text-indigo-200 hover:text-white hover:bg-white/10 transition-colors">登出</button>
+    </div>
+  </div>
+</header>
+
+<main class="max-w-7xl mx-auto px-4 py-6">
+  <div class="rounded-2xl border border-sky-200 bg-sky-50 px-5 py-4 shadow-sm mb-6">
+    <div class="flex items-start gap-3">
+      <span class="text-xl mt-0.5">🎓</span>
+      <div>
+        <p class="text-sm font-bold text-sky-800">學生端注意事項</p>
+        <p class="text-sm text-sky-700">請先確認姓名與學號後再作答；完成考試後可使用查詢碼查看成績與答題分析。</p>
+      </div>
+    </div>
+  </div>
+
+  <section class="grid gap-4 md:grid-cols-2">
+    <a href="/exam-list.html" class="group rounded-xl bg-white p-6 shadow border border-gray-100 transition-colors hover:border-indigo-200">
+      <div class="mb-4 flex items-center justify-between">
+        <h2 class="text-lg font-bold text-gray-800">📝 參加考試</h2>
+        <span class="rounded-full bg-indigo-100 px-2.5 py-1 text-xs font-semibold text-indigo-700">EXAM</span>
+      </div>
+      <p class="text-sm leading-6 text-gray-600">查看目前開放中的試卷，進入作答頁後即可開始考試。</p>
+      <div class="mt-4 text-sm font-medium text-indigo-700">前往考試列表 →</div>
+    </a>
+
+    <a href="/results.html" class="group rounded-xl bg-white p-6 shadow border border-gray-100 transition-colors hover:border-indigo-200">
+      <div class="mb-4 flex items-center justify-between">
+        <h2 class="text-lg font-bold text-gray-800">📊 成績查詢</h2>
+        <span class="rounded-full bg-sky-100 px-2.5 py-1 text-xs font-semibold text-sky-700">RESULT</span>
+      </div>
+      <p class="text-sm leading-6 text-gray-600">使用查詢碼查看作答成績、詳解與分析報告。</p>
+      <div class="mt-4 text-sm font-medium text-sky-700">前往成績查詢 →</div>
+    </a>
+  </section>
+</main>
+
+<script>
+const studentLoginUrl = '/login.html?role=student&return_to=' + encodeURIComponent(location.pathname + location.search);
+
+function redirectToStudentLogin() {
+  location.replace(studentLoginUrl);
+}
+
+async function ensureStudentSession() {
+  let res;
+  try {
+    res = await fetch('/api/student/me', { credentials: 'same-origin' });
+  } catch (_) {
+    redirectToStudentLogin();
+    return null;
+  }
+  if (!res.ok) {
+    redirectToStudentLogin();
+    return null;
+  }
+  const data = await res.json();
+  document.getElementById('student-badge').textContent = data.student.student_id
+    ? `${data.student.name} (${data.student.student_id})`
+    : data.student.name;
+  return data.student;
+}
+
+async function logoutStudent() {
+  try {
+    await fetch('/api/student/logout', { method: 'POST', credentials: 'same-origin' });
+  } catch (_) {}
+  location.replace('/login.html?role=student');
+}
+
+window.addEventListener('pageshow', () => {
+  ensureStudentSession();
+});
+
+ensureStudentSession();
+</script>
+</body>
+</html>
+
+
+

@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>登入 - 數理資優班考題系統</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>body{font-family:'Noto Sans TC',sans-serif;}</style>
+</head>
+<body class="min-h-screen bg-[radial-gradient(circle_at_top,_#eefbf5_0%,_#eef2ff_50%,_#f8fafc_100%)] text-slate-800">
+<main class="mx-auto flex min-h-screen max-w-6xl items-center px-4 py-10">
+  <div class="grid w-full overflow-hidden rounded-[2rem] border border-white/80 bg-white/85 shadow-2xl backdrop-blur lg:grid-cols-[1.05fr_0.95fr]">
+    <section class="bg-[linear-gradient(135deg,#0f766e_0%,#2563eb_100%)] px-8 py-10 text-white sm:px-10">
+      <p class="inline-flex rounded-full bg-white/15 px-4 py-1 text-sm font-medium tracking-[0.18em]">UNIFIED LOGIN</p>
+      <h1 class="mt-6 text-4xl font-black tracking-tight sm:text-5xl">先登入，再分流</h1>
+      <p class="mt-4 max-w-xl text-sm leading-7 text-cyan-50">不需要先選老師或學生。輸入帳號密碼後，系統會依登入身份自動導向對應畫面。</p>
+      <div class="mt-8 grid gap-4 sm:grid-cols-2">
+        <div class="rounded-3xl bg-white/12 p-5 ring-1 ring-white/20">
+          <div class="text-3xl">👨‍🎓</div>
+          <div class="mt-3 text-lg font-bold">學生</div>
+          <p class="mt-2 text-sm leading-6 text-cyan-50">登入後進入學生首頁，可參加考試、查詢成績與分析。</p>
+        </div>
+        <div class="rounded-3xl bg-white/12 p-5 ring-1 ring-white/20">
+          <div class="text-3xl">🧑‍🏫</div>
+          <div class="mt-3 text-lg font-bold">老師</div>
+          <p class="mt-2 text-sm leading-6 text-cyan-50">登入後進入老師首頁，可管理題庫、試卷、統計與 AI 出題。</p>
+        </div>
+      </div>
+      <div class="mt-8 rounded-3xl bg-black/15 px-5 py-4 text-sm text-cyan-50 ring-1 ring-white/10">
+        預設示範帳號可在 `.env` 設定：
+        `ADMIN_USERNAME` / `ADMIN_PASSWORD`
+        與 `STUDENT_USERNAME` / `STUDENT_PASSWORD`
+      </div>
+    </section>
+
+    <section class="px-8 py-10 sm:px-10">
+      <div class="mx-auto w-full max-w-md">
+        <a href="/login.html" class="inline-flex rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-600">登入首頁</a>
+        <div class="mt-6">
+          <h2 class="text-3xl font-black text-slate-900">帳號登入</h2>
+          <p id="role-hint" class="mt-2 text-sm text-slate-500">登入成功後，系統會自動判斷你是老師或學生。</p>
+        </div>
+
+        <div class="mt-8 space-y-4">
+          <div>
+            <label class="mb-1 block text-sm font-medium text-slate-700">帳號</label>
+            <input id="username" type="text" class="w-full rounded-2xl border border-slate-300 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="請輸入帳號">
+          </div>
+          <div>
+            <label class="mb-1 block text-sm font-medium text-slate-700">密碼</label>
+            <input id="password" type="password" class="w-full rounded-2xl border border-slate-300 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="請輸入密碼">
+          </div>
+          <div>
+            <label class="mb-1 block text-sm font-medium text-slate-700">老師 API Key（選填）</label>
+            <input id="teacher-api-key" type="password" class="w-full rounded-2xl border border-slate-300 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="可用 API Key 直接進入老師首頁">
+          </div>
+          <p id="login-error" class="hidden text-sm text-rose-600"></p>
+          <button onclick="login()" class="w-full rounded-2xl bg-slate-900 px-4 py-3 font-medium text-white transition hover:bg-slate-800">登入系統</button>
+          <button onclick="loginWithApiKey()" class="w-full rounded-2xl border border-indigo-300 bg-indigo-50 px-4 py-3 font-medium text-indigo-700 transition hover:bg-indigo-100">使用 API Key 登入老師</button>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+<script>
+const params = new URLSearchParams(location.search);
+const role = params.get('role') || '';
+const returnTo = params.get('return_to') || '';
+
+if (role === 'student') {
+  document.getElementById('role-hint').textContent = '登入學生帳號後，會自動進入學生首頁。';
+} else if (role === 'teacher') {
+  document.getElementById('role-hint').textContent = '登入老師帳號後，會自動進入老師首頁。';
+}
+
+function redirectAfterLogin(defaultUrl) {
+  if (returnTo) {
+    location.replace(returnTo);
+    return;
+  }
+  location.replace(defaultUrl || '/');
+}
+
+async function login() {
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  const errorEl = document.getElementById('login-error');
+  errorEl.classList.add('hidden');
+  if (!username || !password) {
+    errorEl.textContent = '請輸入帳號與密碼';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  const res = await fetch('/api/login', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    errorEl.textContent = data.error || '登入失敗';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  sessionStorage.removeItem('teacher_api_key');
+  redirectAfterLogin(data.redirect_to || '/');
+}
+
+async function loginWithApiKey() {
+  const key = document.getElementById('teacher-api-key').value.trim();
+  const errorEl = document.getElementById('login-error');
+  errorEl.classList.add('hidden');
+  if (!key) {
+    errorEl.textContent = '請輸入老師 API Key';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  const res = await fetch('/api/admin/session', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': key },
+    body: JSON.stringify({ api_key: key })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    errorEl.textContent = data.error || 'API Key 登入失敗';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  sessionStorage.setItem('teacher_api_key', key);
+  redirectAfterLogin('/admin.html');
+}
+</script>
+</body>
+</html>

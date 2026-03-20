@@ -7,35 +7,61 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <script>MathJax = { tex: { inlineMath: [['$','$'],['\\(','\\)']], displayMath: [['$$','$$'],['\\[','\\]']] } };</script>
 <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" id="MathJax-script" async></script>
-<style>body{font-family:'Noto Sans TC',sans-serif;}</style>
+<style>
+html{overflow-y:scroll;}
+body{font-family:'Noto Sans TC',sans-serif;}
+.top-nav-btn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  height:36px;
+  line-height:1;
+  box-sizing:border-box;
+  white-space:nowrap;
+}
+.tab-btn{transition:all .2s;}
+.tab-btn.active{background:#4338ca;color:#fff;}
+</style>
 </head>
-<body class="bg-gray-50 min-h-screen">
-<header class="bg-indigo-700 text-white py-4 px-6 shadow">
-  <div class="max-w-5xl mx-auto flex items-center gap-3">
-    <a href="/" class="flex items-center gap-1 text-indigo-200 hover:text-white bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors">🏠 首頁</a>
-    <span class="text-lg font-bold">🤖 AI 智慧出題</span>
+<body class="bg-gray-100 min-h-screen">
+<header class="bg-indigo-700 text-white py-4 px-6 shadow sticky top-0 z-50">
+  <div class="max-w-7xl mx-auto flex items-center gap-4">
+    <a href="/admin.html" class="top-nav-btn text-white hover:text-white bg-white/10 hover:bg-white/20 border border-white/30 px-4 py-1.5 rounded-lg text-sm font-medium transition-colors">👨‍🏫 老師首頁</a>
+    <div class="flex gap-2 flex-wrap items-center">
+      <a href="/admin.html?tab=questions" class="tab-btn top-nav-btn px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30 text-indigo-200 hover:text-white hover:bg-white/10">📚 題庫管理</a>
+      <a href="/admin.html?tab=exams" class="tab-btn top-nav-btn px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30 text-indigo-200 hover:text-white hover:bg-white/10">📝 試卷管理</a>
+      <a href="/ai-generate.html" class="tab-btn top-nav-btn active px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30">🤖 AI 出題</a>
+      <a href="/admin.html?tab=accounts" class="tab-btn top-nav-btn px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30 text-indigo-200 hover:text-white hover:bg-white/10">👥 帳號管理</a>
+      <a href="/admin.html?tab=stats" class="tab-btn top-nav-btn px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30 text-indigo-200 hover:text-white hover:bg-white/10">📊 成績統計</a>
+      <a href="/admin.html?tab=review" class="tab-btn top-nav-btn px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30 text-indigo-200 hover:text-white hover:bg-white/10">🛡️ 審查工作台</a>
+      <a href="/admin.html?tab=ml" class="tab-btn top-nav-btn px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30 text-indigo-200 hover:text-white hover:bg-white/10">🧠 ML 分析</a>
+      <a href="/admin.html?tab=grading" class="tab-btn top-nav-btn px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30 text-indigo-200 hover:text-white hover:bg-white/10">✍️ 作文批改</a>
+    </div>
+    <div class="ml-auto flex items-center gap-2">
+      <button class="top-nav-btn px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30 text-indigo-200 hover:text-white hover:bg-white/10 transition-colors" onclick="logoutAdmin()">登出</button>
+    </div>
   </div>
 </header>
-<main class="max-w-5xl mx-auto px-4 py-8">
+<main class="max-w-7xl mx-auto px-4 pt-4 pb-6">
 
   <!-- API Key 設定說明 -->
-  <div class="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6">
+  <div class="bg-sky-50 border border-sky-200 rounded-xl p-4 mb-6">
     <div class="flex items-start gap-3">
-      <span class="text-xl mt-0.5">🔑</span>
+      <span class="text-xl mt-0.5">🤖</span>
       <div class="flex-1">
-        <p class="font-semibold text-amber-800 mb-1">使用前請先在伺服器設定 LLM API Key</p>
-        <p class="text-sm text-amber-700 mb-2">AI 出題功能需要在伺服器端的 <code class="bg-amber-100 px-1 rounded font-mono">.env</code> 檔案中設定 API Key，並重新啟動伺服器。<strong>前端頁面上的「管理員金鑰」欄位是後台驗證用，與 LLM 金鑰無關。</strong></p>
-        <details class="text-sm text-amber-700">
-          <summary class="cursor-pointer font-medium hover:text-amber-900">📋 展開設定說明</summary>
-          <div class="mt-2 space-y-1 pl-2 border-l-2 border-amber-300">
-            <p>1. 在系統資料夾中找到 <code class="bg-amber-100 px-1 rounded font-mono">.env</code> 檔案（若不存在請複製 <code class="bg-amber-100 px-1 rounded font-mono">.env.example</code>）</p>
+        <p class="font-semibold text-sky-800 mb-1">使用前請先在伺服器設定 LLM API Key</p>
+        <p class="text-sm text-sky-700 mb-2">AI 出題功能需要在伺服器端的 <code class="bg-sky-100 px-1 rounded font-mono">.env</code> 檔案中設定 API Key，並重新啟動伺服器。<strong>前端頁面上的「老師登入金鑰」欄位是權限驗證用，與 LLM 金鑰無關。</strong></p>
+        <details class="text-sm text-sky-700">
+          <summary class="cursor-pointer font-medium hover:text-sky-900">📋 展開設定說明</summary>
+          <div class="mt-2 space-y-1 pl-2 border-l-2 border-sky-300">
+            <p>1. 在系統資料夾中找到 <code class="bg-sky-100 px-1 rounded font-mono">.env</code> 檔案（若不存在請複製 <code class="bg-sky-100 px-1 rounded font-mono">.env.example</code>）</p>
             <p>2. 依選用的服務填入對應金鑰：</p>
             <ul class="ml-4 mt-1 space-y-0.5 list-disc">
-              <li><strong>OpenAI</strong>（GPT-4o-mini）：<code class="bg-amber-100 px-1 rounded font-mono">OPENAI_API_KEY=sk-...</code></li>
-              <li><strong>Google Gemini</strong>：<code class="bg-amber-100 px-1 rounded font-mono">GEMINI_API_KEY=AIza...</code></li>
-              <li><strong>Anthropic Claude</strong>：<code class="bg-amber-100 px-1 rounded font-mono">ANTHROPIC_API_KEY=sk-ant-...</code></li>
+              <li><strong>OpenAI</strong>（GPT-4o-mini）：<code class="bg-sky-100 px-1 rounded font-mono">OPENAI_API_KEY=sk-...</code></li>
+              <li><strong>Google Gemini</strong>：<code class="bg-sky-100 px-1 rounded font-mono">GEMINI_API_KEY=AIza...</code></li>
+              <li><strong>Anthropic Claude</strong>：<code class="bg-sky-100 px-1 rounded font-mono">ANTHROPIC_API_KEY=sk-ant-...</code></li>
             </ul>
-            <p>3. 儲存 <code class="bg-amber-100 px-1 rounded font-mono">.env</code> 後，重新啟動伺服器（<code class="bg-amber-100 px-1 rounded font-mono">start.bat</code>）即可使用</p>
+            <p>3. 儲存 <code class="bg-sky-100 px-1 rounded font-mono">.env</code> 後，重新啟動伺服器（<code class="bg-sky-100 px-1 rounded font-mono">start.bat</code>）即可使用</p>
           </div>
         </details>
       </div>
@@ -106,7 +132,7 @@
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-600 mb-1">管理員金鑰（若伺服器有設定）</label>
+        <label class="block text-sm font-medium text-gray-600 mb-1">老師登入金鑰（若伺服器有設定）</label>
         <input id="api_key" type="password" placeholder="x-api-key" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
       </div>
 
@@ -135,6 +161,44 @@
 </main>
 <script>
 let generatedQuestions = [];
+const teacherLoginUrl = '/login.html?role=teacher&return_to=' + encodeURIComponent(location.pathname + location.search);
+
+function redirectToTeacherLogin() {
+  location.replace(teacherLoginUrl);
+}
+
+function getTeacherApiKey() {
+  const input = document.getElementById('api_key');
+  const typed = input?.value?.trim() || '';
+  if (typed) {
+    sessionStorage.setItem('teacher_api_key', typed);
+    return typed;
+  }
+  return sessionStorage.getItem('teacher_api_key') || '';
+}
+
+function syncStoredTeacherApiKey() {
+  const input = document.getElementById('api_key');
+  if (!input) return;
+  const stored = sessionStorage.getItem('teacher_api_key') || '';
+  if (!input.value && stored) input.value = stored;
+}
+
+async function ensureAdminSession() {
+  try {
+    const key = getTeacherApiKey();
+    const headers = key ? { 'x-api-key': key } : {};
+    const res = await fetch('/api/admin/me', { credentials: 'same-origin', headers });
+    if (!res.ok) {
+      redirectToTeacherLogin();
+      return false;
+    }
+    return true;
+  } catch (_) {
+    redirectToTeacherLogin();
+    return false;
+  }
+}
 
 // 科目變更 → 若為作文科目自動切換題型為寫作
 function onAiSubjectChange() {
@@ -174,7 +238,7 @@ async function generate() {
     hint:        document.getElementById('hint').value.trim()
   };
   const headers = { 'Content-Type': 'application/json' };
-  const key = document.getElementById('api_key').value.trim();
+  const key = getTeacherApiKey();
   if (key) headers['x-api-key'] = key;
 
   try {
@@ -191,7 +255,7 @@ async function generate() {
       const providerName = {openai:'OpenAI', gemini:'Google Gemini', claude:'Anthropic Claude'}[document.getElementById('provider').value] || '';
       box.innerHTML = `<p class="font-semibold mb-2">❌ ${e.message}</p>
         <p class="text-sm">請在伺服器端的 <code class="bg-red-100 px-1 rounded font-mono">.env</code> 檔案中設定 <strong>${providerName}</strong> 的 API Key，然後重新啟動伺服器（start.bat）。</p>
-        <p class="text-sm mt-1">詳細說明請參閱頁面頂端的「🔑 使用前請先在伺服器設定 LLM API Key」提示框。</p>`;
+        <p class="text-sm mt-1">詳細說明請參閱頁面頂端的「使用前請先在伺服器設定 LLM API Key」提示框。</p>`;
     } else {
       box.textContent = '❌ ' + e.message;
     }
@@ -260,7 +324,7 @@ function updateSaveCount() {
 }
 
 async function saveSelected() {
-  const key = document.getElementById('api_key').value.trim();
+  const key = getTeacherApiKey();
   const headers = { 'Content-Type': 'application/json' };
   if (key) headers['x-api-key'] = key;
 
@@ -286,12 +350,36 @@ async function saveSelected() {
   }
 }
 
+async function logoutAdmin() {
+  try {
+    await fetch('/api/admin/logout', { method: 'POST', credentials: 'same-origin' });
+  } catch (_) {}
+  sessionStorage.removeItem('teacher_api_key');
+  const keyInput = document.getElementById('api_key');
+  if (keyInput) keyInput.value = '';
+  location.replace('/login.html?role=teacher');
+}
+
 function escHtml(str) {
   if (!str) return '';
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-loadSubjects();
+window.addEventListener('pageshow', () => {
+  ensureAdminSession();
+});
+
+async function initPage() {
+  syncStoredTeacherApiKey();
+  if (!(await ensureAdminSession())) return;
+  loadSubjects();
+}
+
+initPage();
 </script>
 </body>
 </html>
+
+
+
+

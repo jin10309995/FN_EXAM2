@@ -7,9 +7,23 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <script>MathJax = { tex: { inlineMath: [['$','$'],['\\(','\\)']], displayMath: [['$$','$$'],['\\[','\\]']] } };</script>
 <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" id="MathJax-script" async></script>
-<style>body{font-family:'Noto Sans TC',sans-serif;}</style>
+<style>
+html{overflow-y:scroll;}
+body{font-family:'Noto Sans TC',sans-serif;}
+.top-nav-btn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  height:36px;
+  line-height:1;
+  box-sizing:border-box;
+  white-space:nowrap;
+}
+.tab-btn{transition:all .2s;}
+.tab-btn.active{background:#4338ca;color:#fff;}
+</style>
 </head>
-<body class="bg-gray-50 min-h-screen">
+<body class="bg-gray-100 min-h-screen">
 
 <!-- Registration Modal -->
 <div id="reg-modal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -35,25 +49,34 @@
 </div>
 
 <!-- Exam Header -->
-<header class="bg-indigo-700 text-white py-3 px-6 shadow sticky top-0 z-40">
-  <div class="max-w-4xl mx-auto flex justify-between items-center">
-    <div>
-      <span class="font-bold" id="exam-title">載入中...</span>
-      <span class="text-indigo-200 text-sm ml-3" id="progress-text"></span>
+<header class="bg-indigo-700 text-white py-4 px-6 shadow sticky top-0 z-50">
+  <div class="max-w-7xl mx-auto flex flex-col gap-3">
+    <div class="flex items-center gap-4 flex-wrap">
+      <button onclick="goHome('/exam-list.html')" class="top-nav-btn text-white hover:text-white bg-white/10 hover:bg-white/20 border border-white/30 px-4 py-1.5 rounded-lg text-sm font-medium transition-colors">🎓 學生首頁</button>
+      <div class="flex gap-2 flex-wrap items-center">
+        <button onclick="goHome('/exam-list.html')" class="tab-btn top-nav-btn px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30 text-indigo-200 hover:text-white hover:bg-white/10">📝 選擇考題</button>
+        <button onclick="goHome('/results.html')" class="tab-btn top-nav-btn px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30 text-indigo-200 hover:text-white hover:bg-white/10">📊 成績查詢</button>
+        <span class="tab-btn top-nav-btn active px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30">📝 作答中</span>
+      </div>
+      <div class="ml-auto flex items-center gap-3">
+        <div id="timer" class="bg-indigo-800 px-4 py-1.5 rounded-lg font-mono text-base font-bold">--:--</div>
+        <button onclick="confirmSubmit()" class="bg-green-600 hover:bg-green-700 px-4 py-1.5 rounded-lg text-sm font-medium transition-colors">提交作答</button>
+        <button onclick="logoutStudent()" class="top-nav-btn px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30 text-indigo-200 hover:text-white hover:bg-white/10 transition-colors">登出</button>
+      </div>
     </div>
-    <div class="flex items-center gap-4">
-      <div id="timer" class="bg-indigo-800 px-4 py-1 rounded-full font-mono text-lg font-bold">--:--</div>
-      <button onclick="confirmSubmit()" class="bg-green-500 hover:bg-green-600 px-4 py-1 rounded-lg font-medium transition-colors">提交作答</button>
+    <div class="text-sm text-indigo-100">
+      <span class="font-semibold text-white" id="exam-title">載入中...</span>
+      <span class="text-indigo-200 ml-3" id="progress-text"></span>
     </div>
   </div>
 </header>
 
-<main class="max-w-4xl mx-auto px-4 py-6" id="questions-container">
+<main class="max-w-7xl mx-auto px-4 py-6" id="questions-container">
   <div class="text-center py-16 text-gray-500">載入中...</div>
 </main>
 
 <div class="fixed bottom-0 left-0 right-0 bg-white border-t shadow-lg p-3 z-30">
-  <div class="max-w-4xl mx-auto flex flex-col items-center gap-2" id="question-nav"></div>
+  <div class="max-w-7xl mx-auto flex flex-col items-center gap-2" id="question-nav"></div>
 </div>
 
 <script>
@@ -72,6 +95,26 @@ let currentLookupToken = '';
 let examStartedAt = null;
 let autoSaveTimer = null;
 let saveInFlight = false;
+const studentLoginUrl = '/login.html?role=student&return_to=' + encodeURIComponent(location.pathname + location.search);
+
+function redirectToStudentLogin() {
+  location.replace(studentLoginUrl);
+}
+
+async function ensureStudentSession() {
+  try {
+    const res = await fetch('/api/student/me', { credentials: 'same-origin' });
+    if (!res.ok) {
+      redirectToStudentLogin();
+      return null;
+    }
+    const data = await res.json();
+    return data.student || null;
+  } catch (_) {
+    redirectToStudentLogin();
+    return null;
+  }
+}
 
 async function loadExam() {
   const res = await fetch(`/api/public/exams/${examId}/take`);
@@ -553,6 +596,21 @@ function confirmSubmit() {
   if (confirm('確定要提交作答嗎？')) submitAnswers();
 }
 
+function goHome(url) {
+  const hasProgress = currentSubmissionId && Object.keys(answers).length > 0;
+  if (hasProgress && !confirm('目前作答進度可能尚未提交，確定要離開並返回首頁嗎？')) return;
+  location.href = url;
+}
+
+async function logoutStudent() {
+  const hasProgress = currentSubmissionId && Object.keys(answers).length > 0;
+  if (hasProgress && !confirm('目前作答進度可能尚未提交，確定要登出並離開嗎？')) return;
+  try {
+    await fetch('/api/student/logout', { method: 'POST', credentials: 'same-origin' });
+  } catch (_) {}
+  location.replace('/login.html?role=student');
+}
+
 async function submitAnswers() {
   clearInterval(timerInterval);
   if (autoSaveTimer) clearInterval(autoSaveTimer);
@@ -587,7 +645,25 @@ window.addEventListener('beforeunload', () => {
     );
   }
 });
-loadExam();
+
+window.addEventListener('pageshow', () => {
+  ensureStudentSession();
+});
+
+async function initPage() {
+  const student = await ensureStudentSession();
+  if (!student) return;
+  const nameInput = document.getElementById('student-name');
+  const idInput = document.getElementById('student-id');
+  if (student.name && nameInput && !nameInput.value.trim()) nameInput.value = student.name;
+  if (student.student_id && idInput && !idInput.value.trim()) idInput.value = student.student_id;
+  loadExam();
+}
+
+initPage();
 </script>
 </body>
 </html>
+
+
+

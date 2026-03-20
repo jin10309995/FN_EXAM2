@@ -94,12 +94,33 @@ db.exec(`
     updated_at    TEXT DEFAULT (datetime('now','localtime'))
   );
 
+  CREATE TABLE IF NOT EXISTS students (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    username      TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    student_name  TEXT NOT NULL,
+    student_id    TEXT,
+    is_active     INTEGER NOT NULL DEFAULT 1,
+    created_at    TEXT DEFAULT (datetime('now','localtime')),
+    updated_at    TEXT DEFAULT (datetime('now','localtime'))
+  );
+
   CREATE TABLE IF NOT EXISTS admin_sessions (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     admin_id    INTEGER NOT NULL REFERENCES admins(id) ON DELETE CASCADE,
     token_hash  TEXT NOT NULL UNIQUE,
     expires_at  TEXT NOT NULL,
     created_at  TEXT DEFAULT (datetime('now','localtime')),
+    last_seen_at TEXT DEFAULT (datetime('now','localtime'))
+  );
+
+  CREATE TABLE IF NOT EXISTS student_sessions (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    student_name TEXT NOT NULL,
+    student_id   TEXT,
+    token_hash   TEXT NOT NULL UNIQUE,
+    expires_at   TEXT NOT NULL,
+    created_at   TEXT DEFAULT (datetime('now','localtime')),
     last_seen_at TEXT DEFAULT (datetime('now','localtime'))
   );
 
@@ -415,6 +436,8 @@ db.exec(`
   ON submissions(lookup_token);
   CREATE INDEX IF NOT EXISTS idx_admin_sessions_token_exp
   ON admin_sessions(token_hash, expires_at);
+  CREATE INDEX IF NOT EXISTS idx_student_sessions_token_exp
+  ON student_sessions(token_hash, expires_at);
   CREATE INDEX IF NOT EXISTS idx_question_versions_question
   ON question_versions(question_id, version_no DESC);
 `);
@@ -431,8 +454,22 @@ function hashPassword(password) {
     const password = process.env.ADMIN_PASSWORD || process.env.ADMIN_API_KEY || 'admin1234';
     db.prepare(`
       INSERT INTO admins (username, password_hash, display_name, role)
-      VALUES (?, ?, ?, 'super_admin')
-    `).run(username, hashPassword(password), '系統管理員');
+      VALUES (?, ?, ?, 'teacher')
+    `).run(username, hashPassword(password), '老師帳號');
+  }
+}
+
+{
+  const studentCount = db.prepare(`SELECT COUNT(*) AS c FROM students`).get().c;
+  if (studentCount === 0) {
+    const username = process.env.STUDENT_USERNAME || 'student';
+    const password = process.env.STUDENT_PASSWORD || 'student1234';
+    const studentName = process.env.STUDENT_NAME || '示範學生';
+    const studentId = process.env.STUDENT_ID || 'S001';
+    db.prepare(`
+      INSERT INTO students (username, password_hash, student_name, student_id)
+      VALUES (?, ?, ?, ?)
+    `).run(username, hashPassword(password), studentName, studentId);
   }
 }
 

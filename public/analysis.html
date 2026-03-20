@@ -5,22 +5,63 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>答題分析報告 - 數理資優班考題系統</title>
 <script src="https://cdn.tailwindcss.com"></script>
-<style>body{font-family:'Noto Sans TC',sans-serif;}</style>
+<style>
+html{overflow-y:scroll;}
+body{font-family:'Noto Sans TC',sans-serif;}
+.top-nav-btn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  height:36px;
+  line-height:1;
+  box-sizing:border-box;
+  white-space:nowrap;
+}
+.tab-btn{transition:all .2s;}
+.tab-btn.active{background:#4338ca;color:#fff;}
+</style>
 </head>
-<body class="bg-gray-50 min-h-screen">
-<header class="bg-emerald-700 text-white py-4 px-6 shadow">
-  <div class="max-w-4xl mx-auto flex items-center gap-3">
-    <a href="/" class="flex items-center gap-1 text-emerald-200 hover:text-white bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors">🏠 首頁</a>
-    <span class="text-lg font-bold">📊 答題分析報告</span>
+<body class="bg-gray-100 min-h-screen">
+<header class="bg-indigo-700 text-white py-4 px-6 shadow sticky top-0 z-50">
+  <div class="max-w-7xl mx-auto flex items-center gap-4">
+    <a href="/exam-list.html" class="top-nav-btn text-white hover:text-white bg-white/10 hover:bg-white/20 border border-white/30 px-4 py-1.5 rounded-lg text-sm font-medium transition-colors">🎓 學生首頁</a>
+    <div class="flex gap-2 flex-wrap items-center">
+      <a href="/exam-list.html" class="tab-btn top-nav-btn px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30 text-indigo-200 hover:text-white hover:bg-white/10">📝 選擇考題</a>
+      <a href="/results.html" class="tab-btn top-nav-btn px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30 text-indigo-200 hover:text-white hover:bg-white/10">📊 成績查詢</a>
+      <span class="tab-btn top-nav-btn active px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30">📊 答題分析報告</span>
+    </div>
+    <div class="ml-auto flex items-center gap-2">
+      <button onclick="logoutStudent()" class="top-nav-btn px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30 text-indigo-200 hover:text-white hover:bg-white/10 transition-colors">登出</button>
+    </div>
   </div>
 </header>
-<main class="max-w-4xl mx-auto px-4 py-8" id="analysis-container">
+<main class="max-w-7xl mx-auto px-4 py-6" id="analysis-container">
   <div class="text-center py-16 text-gray-500">載入中...</div>
 </main>
 <script>
+const studentLoginUrl = '/login.html?role=student&return_to=' + encodeURIComponent(location.pathname + location.search);
 const params = new URLSearchParams(location.search);
 const id = params.get('id');
 const token = params.get('token');
+
+function redirectToStudentLogin() {
+  location.replace(studentLoginUrl);
+}
+
+async function ensureStudentSession() {
+  try {
+    const res = await fetch('/api/student/me', { credentials: 'same-origin' });
+    if (!res.ok) {
+      redirectToStudentLogin();
+      return false;
+    }
+    return true;
+  } catch (_) {
+    redirectToStudentLogin();
+    return false;
+  }
+}
+
 function getOptionLabel(q, letter) {
   if (!letter) return '（未作答）';
   if (q.type === 'true_false') return letter.toUpperCase() === 'T' ? '是' : '否';
@@ -109,7 +150,7 @@ async function loadAnalysis() {
 
   document.getElementById('analysis-container').innerHTML = `
     <!-- 頂部概覽 -->
-    <div class="bg-white rounded-2xl shadow-lg p-8 mb-6 ${pctBg} border">
+    <div class="bg-white rounded-xl shadow p-6 mb-6 ${pctBg} border">
       <div class="text-center mb-4">
         <h2 class="text-2xl font-bold text-gray-800 mb-1">${escHtml(d.student_name)} 的答題分析報告</h2>
         <p class="text-gray-500 text-sm">${escHtml(d.exam_title)} ｜ ${d.submitted_at}</p>
@@ -140,13 +181,13 @@ async function loadAnalysis() {
     </div>
 
     <!-- 科目表現 -->
-    <div class="bg-white rounded-2xl shadow p-6 mb-6">
+    <div class="bg-white rounded-xl shadow p-6 mb-6">
       <h3 class="text-lg font-bold text-gray-800 mb-4">📚 各科目表現</h3>
       ${subjectBars || '<p class="text-gray-400">無科目資料</p>'}
     </div>
 
     <!-- 難度分布 -->
-    <div class="bg-white rounded-2xl shadow p-6 mb-6">
+    <div class="bg-white rounded-xl shadow p-6 mb-6">
       <h3 class="text-lg font-bold text-gray-800 mb-4">🎯 難度分布</h3>
       ${diffRows ? `
         <table class="w-full">
@@ -165,14 +206,14 @@ async function loadAnalysis() {
     </div>
 
     <!-- 學習建議 -->
-    <div class="bg-blue-50 border border-blue-200 rounded-2xl p-6 mb-6">
+    <div class="bg-blue-50 border border-blue-200 rounded-xl p-6 mb-6">
       <h3 class="text-lg font-bold text-blue-800 mb-3">💡 學習建議</h3>
       ${d.suggestions.map(s => `<p class="text-blue-700 mb-1">• ${s}</p>`).join('')}
     </div>
 
     <!-- 能力估算（Rasch Model） -->
     ${d.ability_profile && d.ability_profile.length ? `
-    <div class="bg-white rounded-2xl shadow p-6 mb-6">
+    <div class="bg-white rounded-xl shadow p-6 mb-6">
       <h3 class="text-lg font-bold text-gray-800 mb-1">🧠 能力估算</h3>
       <p class="text-xs text-gray-400 mb-4">以 Rasch IRT 模型依本次作答估算各科能力值（1–5）。樣本數越多越準確。</p>
       ${d.ability_profile.map(p => {
@@ -211,7 +252,26 @@ async function loadAnalysis() {
   `;
 }
 
-loadAnalysis();
+async function logoutStudent() {
+  try {
+    await fetch('/api/student/logout', { method: 'POST', credentials: 'same-origin' });
+  } catch (_) {}
+  location.replace('/login.html?role=student');
+}
+
+window.addEventListener('pageshow', () => {
+  ensureStudentSession();
+});
+
+async function initPage() {
+  if (!(await ensureStudentSession())) return;
+  loadAnalysis();
+}
+
+initPage();
 </script>
 </body>
 </html>
+
+
+

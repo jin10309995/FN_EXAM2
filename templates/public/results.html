@@ -5,34 +5,69 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>成績查詢 - 數理資優班考題系統</title>
 <script src="https://cdn.tailwindcss.com"></script>
-<style>body{font-family:'Noto Sans TC',sans-serif;}</style>
+<style>
+html{overflow-y:scroll;}
+body{font-family:'Noto Sans TC',sans-serif;}
+.top-nav-btn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  height:36px;
+  line-height:1;
+  box-sizing:border-box;
+  white-space:nowrap;
+}
+.tab-btn{transition:all .2s;}
+.tab-btn.active{background:#4338ca;color:#fff;}
+</style>
 </head>
-<body class="bg-slate-50 min-h-screen">
-<header class="bg-indigo-700 text-white py-4 px-6 shadow">
-  <div class="max-w-3xl mx-auto flex items-center gap-3">
-    <a href="/" class="flex items-center gap-1 text-indigo-200 hover:text-white bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors">首頁</a>
-    <span class="text-lg font-bold">個人成績查詢</span>
+<body class="bg-gray-100 min-h-screen">
+<header class="bg-indigo-700 text-white py-4 px-6 shadow sticky top-0 z-50">
+  <div class="max-w-7xl mx-auto flex items-center gap-4">
+    <a href="/exam-list.html" class="top-nav-btn text-white hover:text-white bg-white/10 hover:bg-white/20 border border-white/30 px-4 py-1.5 rounded-lg text-sm font-medium transition-colors">🎓 學生首頁</a>
+    <div class="flex gap-2 flex-wrap items-center">
+      <a href="/exam-list.html" class="tab-btn top-nav-btn px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30 text-indigo-200 hover:text-white hover:bg-white/10">📝 選擇考題</a>
+      <span class="tab-btn top-nav-btn active px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30">📊 成績查詢</span>
+    </div>
+    <div class="ml-auto flex items-center gap-2">
+      <button onclick="logoutStudent()" class="top-nav-btn px-4 py-1.5 rounded-lg text-sm font-medium border border-white/30 text-indigo-200 hover:text-white hover:bg-white/10 transition-colors">登出</button>
+    </div>
   </div>
 </header>
-<main class="max-w-3xl mx-auto px-4 py-10">
-  <div class="bg-white rounded-2xl shadow-lg p-8 mb-6">
+<main class="max-w-7xl mx-auto px-4 py-6">
+  <div class="bg-white rounded-xl shadow p-6 mb-6">
     <h1 class="text-2xl font-bold text-gray-800 mb-2">輸入查詢碼</h1>
     <p class="text-sm text-gray-500 mb-6">查詢碼會在繳卷後顯示，也會附在成績頁連結中。</p>
     <div class="flex flex-col sm:flex-row gap-3">
-      <input id="lookup-token" type="text" class="flex-1 border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="請輸入查詢碼">
-      <button onclick="lookupSubmission()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl font-medium transition-colors">查詢</button>
+      <input id="lookup-token" type="text" class="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="請輸入查詢碼">
+      <button onclick="lookupSubmission()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-lg font-medium transition-colors">查詢</button>
     </div>
     <p id="lookup-error" class="hidden mt-4 text-sm text-red-600"></p>
   </div>
-  <div id="lookup-result" class="hidden bg-white rounded-2xl shadow p-6"></div>
+  <div id="lookup-result" class="hidden bg-white rounded-xl shadow p-6"></div>
 </main>
 <script>
+const studentLoginUrl = '/login.html?role=student&return_to=' + encodeURIComponent(location.pathname + location.search);
 const params = new URLSearchParams(location.search);
 const presetToken = params.get('token') || '';
-if (presetToken) document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('lookup-token').value = presetToken;
-  lookupSubmission();
-});
+
+function redirectToStudentLogin() {
+  location.replace(studentLoginUrl);
+}
+
+async function ensureStudentSession() {
+  try {
+    const res = await fetch('/api/student/me', { credentials: 'same-origin' });
+    if (!res.ok) {
+      redirectToStudentLogin();
+      return false;
+    }
+    return true;
+  } catch (_) {
+    redirectToStudentLogin();
+    return false;
+  }
+}
 
 async function lookupSubmission() {
   const token = document.getElementById('lookup-token').value.trim();
@@ -73,7 +108,31 @@ async function lookupSubmission() {
   resultEl.classList.remove('hidden');
 }
 
+async function logoutStudent() {
+  try {
+    await fetch('/api/student/logout', { method: 'POST', credentials: 'same-origin' });
+  } catch (_) {}
+  location.replace('/login.html?role=student');
+}
+
 function escHtml(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+window.addEventListener('pageshow', () => {
+  ensureStudentSession();
+});
+
+async function initPage() {
+  if (!(await ensureStudentSession())) return;
+  if (presetToken) {
+    document.getElementById('lookup-token').value = presetToken;
+    lookupSubmission();
+  }
+}
+
+initPage();
 </script>
 </body>
 </html>
+
+
+

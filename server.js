@@ -75,6 +75,14 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+app.get('/', (req, res) => res.redirect('/login.html'));
+app.get('/login', (req, res) => res.redirect('/login.html'));
+app.get('/student', (req, res) => res.redirect('/login.html?role=student'));
+app.get('/teacher', (req, res) => res.redirect('/login.html?role=teacher'));
+app.get('/student/home', (req, res) => res.redirect('/student-home.html'));
+app.get('/teacher/home', (req, res) => res.redirect('/admin.html'));
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 // 提交作答專用速率限制：每個 IP 每 15 分鐘最多 10 次
@@ -96,7 +104,7 @@ app.use('/api/', apiLimiter);
 app.use('/audio', express.static(AUDIO_DIR));
 app.use('/images', express.static(IMAGE_DIR));
 
-// ─── 音訊上傳（管理員） ────────────────────────────────────────────────────────
+// ─── 音訊上傳（老師） ──────────────────────────────────────────────────────────
 app.post('/api/audio/upload', requireAdmin, (req, res, next) => {
   upload.single('audio')(req, res, (err) => {
     if (err) return res.status(400).json({ error: err.message });
@@ -126,7 +134,7 @@ app.get('/api/subjects', (req, res) => {
   }
 });
 
-// ─── 管理員金鑰驗證中介層 ────────────────────────────────────────────────────
+// ─── 老師金鑰驗證中介層 ──────────────────────────────────────────────────────
 function requireAdmin(req, res, next) {
   const auth = getAdminAuth(req);
   if (auth.ok) {
@@ -138,12 +146,24 @@ function requireAdmin(req, res, next) {
   if (adminKey) {
     const key = req.headers['x-api-key'] || (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
     if (key && key === adminKey) {
-      req.admin = { id: 0, username: 'api-key-admin', display_name: 'API Key Admin', role: 'super_admin' };
+      req.admin = { id: 0, username: 'api-key-admin', display_name: 'Teacher API Key', role: 'teacher' };
       return next();
     }
-    return res.status(401).json({ error: '未授權，需要登入或管理員金鑰' });
+    return res.status(401).json({ error: '未授權，需要登入或老師金鑰' });
   }
   next();
+}
+
+function requireAdminRole(...roles) {
+  return (req, res, next) => {
+    requireAdmin(req, res, () => {
+      const role = req.admin?.role || '';
+      if (!roles.includes(role)) {
+        return res.status(403).json({ error: '權限不足' });
+      }
+      next();
+    });
+  };
 }
 
 function parseCookies(req) {
@@ -162,13 +182,75 @@ function hashAdminSessionToken(token) {
   return crypto.createHash('sha256').update(String(token || '')).digest('hex');
 }
 
+function appendSetCookie(res, value) {
+  const current = res.getHeader('Set-Cookie');
+  if (!current) {
+    res.setHeader('Set-Cookie', value);
+    return;
+  }
+  const next = Array.isArray(current) ? current.concat(value) : [current, value];
+  res.setHeader('Set-Cookie', next);
+}
+
 function setAdminSessionCookie(res, token, expiresAt) {
   const expires = new Date(expiresAt).toUTCString();
-  res.setHeader('Set-Cookie', `admin_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Expires=${expires}`);
+  appendSetCookie(res, `admin_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Expires=${expires}`);
 }
 
 function clearAdminSessionCookie(res) {
-  res.setHeader('Set-Cookie', 'admin_session=; Path=/; HttpOnly; SameSite=Lax; Expires=Thu, 01 Jan 1970 00:00:00 GMT');
+  appendSetCookie(res, 'admin_session=; Path=/; HttpOnly; SameSite=Lax; Expires=Thu, 01 Jan 1970 00:00:00 GMT');
+}
+
+function hashStudentSessionToken(token) {
+  return crypto.createHash('sha256').update(String(token || '')).digest('hex');
+}
+
+function setStudentSessionCookie(res, token, expiresAt) {
+  const expires = new Date(expiresAt).toUTCString();
+  appendSetCookie(res, `student_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Expires=${expires}`);
+}
+
+function clearStudentSessionCookie(res) {
+  appendSetCookie(res, 'student_session=; Path=/; HttpOnly; SameSite=Lax; Expires=Thu, 01 Jan 1970 00:00:00 GMT');
+}
+
+function getStudentAuth(req) {
+  const token = parseCookies(req).student_session || '';
+  if (!token) return { ok: false };
+  const session = db.prepare(`
+    SELECT id, student_name, student_id, expires_at
+    FROM student_sessions
+    WHERE token_hash = ?
+  `).get(hashStudentSessionToken(token));
+  if (!session) return { ok: false };
+  if (new Date(session.expires_at) <= new Date()) {
+    db.prepare(`DELETE FROM student_sessions WHERE id = ?`).run(session.id);
+    return { ok: false };
+  }
+  db.prepare(`UPDATE student_sessions SET last_seen_at = datetime('now','localtime') WHERE id = ?`).run(session.id);
+  return {
+    ok: true,
+    session: { id: session.id, expires_at: session.expires_at },
+    student: {
+      name: session.student_name,
+      student_id: session.student_id || ''
+    }
+  };
+}
+
+function requireStudent(req, res, next) {
+  const auth = getStudentAuth(req);
+  if (!auth.ok) return res.status(401).json({ error: '請先登入學生帳號' });
+  req.student = auth.student;
+  req.studentSession = auth.session;
+  next();
+}
+
+function getStudentIdentity(req, payload = {}) {
+  const auth = getStudentAuth(req);
+  const name = String(payload.student_name || auth.student?.name || '').trim();
+  const studentId = String(payload.student_id || auth.student?.student_id || '').trim();
+  return { name, student_id: studentId };
 }
 
 function getAdminAuth(req) {
@@ -216,10 +298,102 @@ app.post('/api/admin/session', (req, res) => {
     return res.json({
       success: true,
       auth_mode: adminKey ? 'api_key' : 'open',
-      admin: { username: 'api-key-admin', display_name: 'API Key Admin', role: 'super_admin' }
+      admin: { username: 'api-key-admin', display_name: 'Teacher API Key', role: 'teacher' }
     });
   }
   return res.status(401).json({ error: '尚未登入' });
+});
+
+app.post('/api/student/login', (req, res) => {
+  const { student_name, student_id } = req.body || {};
+  const name = String(student_name || '').trim();
+  const studentId = String(student_id || '').trim();
+  if (!name) return res.status(400).json({ error: '請提供學生姓名' });
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 12).toISOString();
+  db.prepare(`
+    INSERT INTO student_sessions (student_name, student_id, token_hash, expires_at)
+    VALUES (?, ?, ?, ?)
+  `).run(name, studentId || null, hashStudentSessionToken(token), expiresAt);
+  setStudentSessionCookie(res, token, expiresAt);
+  res.json({
+    success: true,
+    student: { name, student_id: studentId },
+    expires_at: expiresAt
+  });
+});
+
+app.post('/api/login', (req, res) => {
+  const { username, password } = req.body || {};
+  const loginName = String(username || '').trim();
+  if (!loginName || !password) return res.status(400).json({ error: '請提供帳號與密碼' });
+
+  const admin = db.prepare(`
+    SELECT id, username, password_hash, display_name, role, is_active
+    FROM admins
+    WHERE username = ?
+  `).get(loginName);
+  if (admin && admin.is_active && admin.password_hash === hashPassword(password)) {
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 12).toISOString();
+    db.prepare(`
+      INSERT INTO admin_sessions (admin_id, token_hash, expires_at)
+      VALUES (?, ?, ?)
+    `).run(admin.id, hashAdminSessionToken(token), expiresAt);
+    setAdminSessionCookie(res, token, expiresAt);
+    clearStudentSessionCookie(res);
+    return res.json({
+      success: true,
+      role: 'teacher',
+      redirect_to: '/admin.html',
+      profile: {
+        name: admin.display_name || admin.username,
+        username: admin.username
+      },
+      expires_at: expiresAt
+    });
+  }
+
+  const student = db.prepare(`
+    SELECT id, username, password_hash, student_name, student_id, is_active
+    FROM students
+    WHERE username = ?
+  `).get(loginName);
+  if (student && student.is_active && student.password_hash === hashPassword(password)) {
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 12).toISOString();
+    db.prepare(`
+      INSERT INTO student_sessions (student_name, student_id, token_hash, expires_at)
+      VALUES (?, ?, ?, ?)
+    `).run(student.student_name, student.student_id || null, hashStudentSessionToken(token), expiresAt);
+    setStudentSessionCookie(res, token, expiresAt);
+    clearAdminSessionCookie(res);
+    return res.json({
+      success: true,
+      role: 'student',
+      redirect_to: '/student-home.html',
+      profile: {
+        name: student.student_name,
+        username: student.username,
+        student_id: student.student_id || ''
+      },
+      expires_at: expiresAt
+    });
+  }
+
+  return res.status(401).json({ error: '帳號或密碼錯誤' });
+});
+
+app.get('/api/student/me', requireStudent, (req, res) => {
+  res.json({ success: true, student: req.student, session: req.studentSession });
+});
+
+app.post('/api/student/logout', requireStudent, (req, res) => {
+  if (req.studentSession?.id) {
+    db.prepare(`DELETE FROM student_sessions WHERE id = ?`).run(req.studentSession.id);
+  }
+  clearStudentSessionCookie(res);
+  res.json({ success: true });
 });
 
 app.post('/api/admin/login', (req, res) => {
@@ -262,6 +436,127 @@ app.post('/api/admin/logout', requireAdmin, (req, res) => {
   }
   clearAdminSessionCookie(res);
   res.json({ success: true });
+});
+
+app.get('/api/admin/accounts', requireAdmin, (req, res) => {
+  const admins = db.prepare(`
+    SELECT id, username, display_name, role, is_active, created_at, updated_at
+    FROM admins
+    ORDER BY id ASC
+  `).all();
+  const students = db.prepare(`
+    SELECT id, username, student_name, student_id, is_active, created_at, updated_at
+    FROM students
+    ORDER BY id ASC
+  `).all();
+  res.json({
+    success: true,
+    current_admin_id: req.admin?.id || null,
+    admins,
+    students
+  });
+});
+
+app.post('/api/admin/accounts/admins', requireAdmin, (req, res) => {
+  const { username, password, display_name, is_active = 1 } = req.body || {};
+  const loginName = String(username || '').trim();
+  const pwd = String(password || '');
+  if (!loginName || !pwd) return res.status(400).json({ error: '請提供帳號與密碼' });
+  const exists = db.prepare(`SELECT id FROM admins WHERE username = ?`).get(loginName);
+  if (exists) return res.status(409).json({ error: '帳號已存在' });
+  const result = db.prepare(`
+    INSERT INTO admins (username, password_hash, display_name, role, is_active)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(loginName, hashPassword(pwd), String(display_name || '').trim() || loginName, 'teacher', is_active ? 1 : 0);
+  const created = db.prepare(`
+    SELECT id, username, display_name, role, is_active, created_at, updated_at
+    FROM admins
+    WHERE id = ?
+  `).get(result.lastInsertRowid);
+  res.json({ success: true, admin: created });
+});
+
+app.put('/api/admin/accounts/admins/:id', requireAdmin, (req, res) => {
+  const accountId = Number(req.params.id);
+  const { display_name, is_active, password } = req.body || {};
+  const existing = db.prepare(`SELECT * FROM admins WHERE id = ?`).get(accountId);
+  if (!existing) return res.status(404).json({ error: '找不到老師帳號' });
+  if (existing.id === req.admin?.id && is_active === 0) {
+    return res.status(400).json({ error: '不可停用目前登入的老師帳號' });
+  }
+  db.prepare(`
+    UPDATE admins
+    SET display_name = ?,
+        role = ?,
+        is_active = ?,
+        password_hash = CASE WHEN ? <> '' THEN ? ELSE password_hash END,
+        updated_at = datetime('now','localtime')
+    WHERE id = ?
+  `).run(
+    String(display_name || '').trim() || existing.display_name || existing.username,
+    'teacher',
+    typeof is_active === 'undefined' ? existing.is_active : (is_active ? 1 : 0),
+    String(password || ''),
+    hashPassword(password || ''),
+    accountId
+  );
+  const updated = db.prepare(`
+    SELECT id, username, display_name, role, is_active, created_at, updated_at
+    FROM admins
+    WHERE id = ?
+  `).get(accountId);
+  res.json({ success: true, admin: updated });
+});
+
+app.post('/api/admin/accounts/students', requireAdmin, (req, res) => {
+  const { username, password, student_name, student_id, is_active = 1 } = req.body || {};
+  const loginName = String(username || '').trim();
+  const pwd = String(password || '');
+  const studentName = String(student_name || '').trim();
+  if (!loginName || !pwd || !studentName) {
+    return res.status(400).json({ error: '請提供學生帳號、密碼與姓名' });
+  }
+  const exists = db.prepare(`SELECT id FROM students WHERE username = ?`).get(loginName);
+  if (exists) return res.status(409).json({ error: '學生帳號已存在' });
+  const result = db.prepare(`
+    INSERT INTO students (username, password_hash, student_name, student_id, is_active)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(loginName, hashPassword(pwd), studentName, String(student_id || '').trim() || null, is_active ? 1 : 0);
+  const created = db.prepare(`
+    SELECT id, username, student_name, student_id, is_active, created_at, updated_at
+    FROM students
+    WHERE id = ?
+  `).get(result.lastInsertRowid);
+  res.json({ success: true, student: created });
+});
+
+app.put('/api/admin/accounts/students/:id', requireAdmin, (req, res) => {
+  const accountId = Number(req.params.id);
+  const { student_name, student_id, is_active, password } = req.body || {};
+  const existing = db.prepare(`SELECT * FROM students WHERE id = ?`).get(accountId);
+  if (!existing) return res.status(404).json({ error: '找不到學生帳號' });
+  db.prepare(`
+    UPDATE students
+    SET student_name = ?,
+        student_id = ?,
+        is_active = ?,
+        password_hash = CASE WHEN ? <> '' THEN ? ELSE password_hash END,
+        updated_at = datetime('now','localtime')
+    WHERE id = ?
+  `).run(
+    String(student_name || '').trim() || existing.student_name,
+    String(student_id || '').trim() || null,
+    typeof is_active === 'undefined' ? existing.is_active : (is_active ? 1 : 0),
+    String(password || ''),
+    hashPassword(password || ''),
+    accountId
+  );
+  const updated = db.prepare(`
+    SELECT id, username, student_name, student_id, is_active, created_at, updated_at
+    FROM students
+    WHERE id = ?
+  `).get(accountId);
+  res.json({ success: true, student: updated });
 });
 
 function normalizeExamQuestionIds(questionIds) {
@@ -935,6 +1230,22 @@ app.get('/api/public/exams', (req, res) => {
   res.json(visible);
 });
 
+app.get('/api/student/exams', requireStudent, (req, res) => {
+  const rows = db.prepare(`
+    SELECT e.*, COUNT(eq.id) as question_count,
+           SUM(eq.score) as total_score,
+           COUNT(CASE WHEN q.type IN ('writing','speaking') THEN 1 END) as writing_count
+    FROM exams e
+    LEFT JOIN exam_questions eq ON eq.exam_id = e.id
+    LEFT JOIN questions q ON q.id = eq.question_id
+    GROUP BY e.id ORDER BY e.id DESC
+  `).all();
+  const visible = rows
+    .filter(exam => examAvailability(exam).ok)
+    .map(summarizeExamForPublic);
+  res.json({ student: req.student, exams: visible });
+});
+
 app.get('/api/exams', requireAdmin, (req, res) => {
   const rows = db.prepare(`
     SELECT e.*, COUNT(eq.id) as question_count,
@@ -1002,7 +1313,8 @@ app.get('/api/public/exams/:id/take', (req, res) => {
 });
 
 app.post('/api/public/exams/:id/session', (req, res) => {
-  const { student_name, student_id, access_code } = req.body || {};
+  const { access_code } = req.body || {};
+  const { name: student_name, student_id } = getStudentIdentity(req, req.body || {});
   if (!student_name) return res.status(400).json({ error: '缺少 student_name' });
   const exam = db.prepare('SELECT * FROM exams WHERE id = ?').get(req.params.id);
   const availability = examAvailability(exam, { ...req, body: { access_code } });
@@ -1282,7 +1594,8 @@ app.put('/api/public/submissions/:id/progress', (req, res) => {
 });
 
 app.post('/api/exams/:id/submit', submitLimiter, (req, res) => {
-  const { student_name, student_id, answers, access_code, submission_id, lookup_token } = req.body;
+  const { answers, access_code, submission_id, lookup_token } = req.body;
+  const { name: student_name, student_id } = getStudentIdentity(req, req.body || {});
   if (!student_name || !answers) return res.status(400).json({ error: '缺少必要資料' });
 
   const exam = db.prepare('SELECT * FROM exams WHERE id = ?').get(req.params.id);
