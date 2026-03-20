@@ -50,7 +50,7 @@ body{font-family:'Noto Sans TC',sans-serif;}
       <span class="text-xl mt-0.5">🤖</span>
       <div class="flex-1">
         <p class="font-semibold text-sky-800 mb-1">使用前請先在伺服器設定 LLM API Key</p>
-        <p class="text-sm text-sky-700 mb-2">AI 出題功能需要在伺服器端的 <code class="bg-sky-100 px-1 rounded font-mono">.env</code> 檔案中設定 API Key，並重新啟動伺服器。<strong>前端頁面上的「老師登入金鑰」欄位是權限驗證用，與 LLM 金鑰無關。</strong></p>
+        <p class="text-sm text-sky-700 mb-2">AI 出題功能需要在伺服器端的 <code class="bg-sky-100 px-1 rounded font-mono">.env</code> 檔案中設定 API Key，並重新啟動伺服器。</p>
         <details class="text-sm text-sky-700">
           <summary class="cursor-pointer font-medium hover:text-sky-900">📋 展開設定說明</summary>
           <div class="mt-2 space-y-1 pl-2 border-l-2 border-sky-300">
@@ -131,11 +131,6 @@ body{font-family:'Noto Sans TC',sans-serif;}
         <input id="hint" type="text" placeholder="可補充出題範圍或特殊要求…" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
       </div>
 
-      <div>
-        <label class="block text-sm font-medium text-gray-600 mb-1">老師登入金鑰（若伺服器有設定）</label>
-        <input id="api_key" type="password" placeholder="x-api-key" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
-      </div>
-
     </div>
     <div class="mt-5 flex gap-3 flex-wrap">
       <button onclick="generate()" id="btn-generate"
@@ -167,28 +162,9 @@ function redirectToTeacherLogin() {
   location.replace(teacherLoginUrl);
 }
 
-function getTeacherApiKey() {
-  const input = document.getElementById('api_key');
-  const typed = input?.value?.trim() || '';
-  if (typed) {
-    sessionStorage.setItem('teacher_api_key', typed);
-    return typed;
-  }
-  return sessionStorage.getItem('teacher_api_key') || '';
-}
-
-function syncStoredTeacherApiKey() {
-  const input = document.getElementById('api_key');
-  if (!input) return;
-  const stored = sessionStorage.getItem('teacher_api_key') || '';
-  if (!input.value && stored) input.value = stored;
-}
-
 async function ensureAdminSession() {
   try {
-    const key = getTeacherApiKey();
-    const headers = key ? { 'x-api-key': key } : {};
-    const res = await fetch('/api/admin/me', { credentials: 'same-origin', headers });
+    const res = await fetch('/api/admin/me', { credentials: 'same-origin' });
     if (!res.ok) {
       redirectToTeacherLogin();
       return false;
@@ -238,11 +214,9 @@ async function generate() {
     hint:        document.getElementById('hint').value.trim()
   };
   const headers = { 'Content-Type': 'application/json' };
-  const key = getTeacherApiKey();
-  if (key) headers['x-api-key'] = key;
 
   try {
-    const res = await fetch('/api/generate/questions', { method: 'POST', headers, body: JSON.stringify(payload) });
+    const res = await fetch('/api/generate/questions', { method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify(payload) });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '生成失敗');
     generatedQuestions = data.questions;
@@ -324,15 +298,13 @@ function updateSaveCount() {
 }
 
 async function saveSelected() {
-  const key = getTeacherApiKey();
   const headers = { 'Content-Type': 'application/json' };
-  if (key) headers['x-api-key'] = key;
 
   const toSave = generatedQuestions.filter((_, i) => document.getElementById('chk-' + i)?.checked);
   if (!toSave.length) { alert('請至少勾選一道題目'); return; }
 
   try {
-    const res = await fetch('/api/questions/batch', { method: 'POST', headers, body: JSON.stringify({ questions: toSave }) });
+    const res = await fetch('/api/questions/batch', { method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify({ questions: toSave }) });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '儲存失敗');
     const box = document.getElementById('success-box');
@@ -354,9 +326,6 @@ async function logoutAdmin() {
   try {
     await fetch('/api/admin/logout', { method: 'POST', credentials: 'same-origin' });
   } catch (_) {}
-  sessionStorage.removeItem('teacher_api_key');
-  const keyInput = document.getElementById('api_key');
-  if (keyInput) keyInput.value = '';
   location.replace('/login.html?role=teacher');
 }
 
@@ -370,7 +339,6 @@ window.addEventListener('pageshow', () => {
 });
 
 async function initPage() {
-  syncStoredTeacherApiKey();
   if (!(await ensureAdminSession())) return;
   loadSubjects();
 }

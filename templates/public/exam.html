@@ -95,10 +95,47 @@ let currentLookupToken = '';
 let examStartedAt = null;
 let autoSaveTimer = null;
 let saveInFlight = false;
+const RECENT_LOOKUP_KEY = 'recent_lookup_records_v1';
+const RECENT_LOOKUP_LIMIT = 20;
 const studentLoginUrl = '/login.html?role=student&return_to=' + encodeURIComponent(location.pathname + location.search);
 
 function redirectToStudentLogin() {
   location.replace(studentLoginUrl);
+}
+
+function readRecentLookups() {
+  try {
+    const raw = localStorage.getItem(RECENT_LOOKUP_KEY);
+    const list = JSON.parse(raw || '[]');
+    if (!Array.isArray(list)) return [];
+    return list.filter(item => item && item.lookup_token && item.submission_id);
+  } catch (_) {
+    return [];
+  }
+}
+
+function writeRecentLookups(list) {
+  try {
+    localStorage.setItem(RECENT_LOOKUP_KEY, JSON.stringify(list.slice(0, RECENT_LOOKUP_LIMIT)));
+  } catch (_) {}
+}
+
+function rememberLookupRecord(record) {
+  if (!record || !record.lookup_token || !record.submission_id) return;
+  const normalized = {
+    submission_id: Number(record.submission_id),
+    exam_id: Number(record.exam_id || 0) || null,
+    lookup_token: String(record.lookup_token),
+    exam_title: String(record.exam_title || ''),
+    submitted_at: String(record.submitted_at || ''),
+    student_name: String(record.student_name || ''),
+    saved_at: new Date().toISOString()
+  };
+  const current = readRecentLookups();
+  const merged = [normalized, ...current.filter(item =>
+    !(Number(item.submission_id) === normalized.submission_id && String(item.lookup_token) === normalized.lookup_token)
+  )];
+  writeRecentLookups(merged);
 }
 
 async function ensureStudentSession() {
@@ -153,6 +190,14 @@ async function startExam() {
   currentLookupToken = data.lookup_token;
   examStartedAt = data.started_at || new Date().toISOString();
   answers = data.answers || {};
+  rememberLookupRecord({
+    submission_id: currentSubmissionId,
+    exam_id: parseInt(examId, 10) || null,
+    lookup_token: currentLookupToken,
+    exam_title: examData?.title || '',
+    submitted_at: data.status === 'submitted' ? new Date().toISOString() : '',
+    student_name: studentName
+  });
   if (data.resumed) {
     const hint = document.getElementById('resume-hint');
     hint.textContent = '已接續先前未完成的作答紀錄，系統會保留你先前的答案。';
@@ -630,6 +675,14 @@ async function submitAnswers() {
   });
   const data = await res.json();
   if (data.submission_id) {
+    rememberLookupRecord({
+      submission_id: data.submission_id,
+      exam_id: parseInt(examId, 10) || null,
+      lookup_token: data.lookup_token,
+      exam_title: examData?.title || '',
+      submitted_at: new Date().toISOString(),
+      student_name: studentName
+    });
     location.href = `/result.html?id=${data.submission_id}&token=${encodeURIComponent(data.lookup_token)}`;
   } else {
     alert('提交失敗：' + (data.error || '未知錯誤'));

@@ -37,12 +37,21 @@ body{font-family:'Noto Sans TC',sans-serif;}
 <main class="max-w-7xl mx-auto px-4 py-6">
   <div class="bg-white rounded-xl shadow p-6 mb-6">
     <h1 class="text-2xl font-bold text-gray-800 mb-2">輸入查詢碼</h1>
-    <p class="text-sm text-gray-500 mb-6">查詢碼會在繳卷後顯示，也會附在成績頁連結中。</p>
+    <p class="text-sm text-gray-500 mb-6">查詢碼作為備援查詢方式；下方「我的成績紀錄」可直接查看，不必手動記住查詢碼。</p>
     <div class="flex flex-col sm:flex-row gap-3">
       <input id="lookup-token" type="text" class="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="請輸入查詢碼">
       <button onclick="lookupSubmission()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-lg font-medium transition-colors">查詢</button>
     </div>
     <p id="lookup-error" class="hidden mt-4 text-sm text-red-600"></p>
+  </div>
+  <div class="bg-white rounded-xl shadow p-6 mb-6">
+    <div class="flex items-center justify-between gap-3 mb-4">
+      <h2 class="text-xl font-bold text-gray-800">我的成績紀錄</h2>
+      <button onclick="loadMySubmissions()" class="text-sm px-3 py-1.5 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50">重新整理</button>
+    </div>
+    <div id="my-submissions-list" class="space-y-3">
+      <div class="text-center py-6 text-gray-400">載入中...</div>
+    </div>
   </div>
   <div id="lookup-result" class="hidden bg-white rounded-xl shadow p-6"></div>
 </main>
@@ -50,6 +59,8 @@ body{font-family:'Noto Sans TC',sans-serif;}
 const studentLoginUrl = '/login.html?role=student&return_to=' + encodeURIComponent(location.pathname + location.search);
 const params = new URLSearchParams(location.search);
 const presetToken = params.get('token') || '';
+const RECENT_LOOKUP_KEY = 'recent_lookup_records_v1';
+const RECENT_LOOKUP_LIMIT = 20;
 
 function redirectToStudentLogin() {
   location.replace(studentLoginUrl);
@@ -69,26 +80,52 @@ async function ensureStudentSession() {
   }
 }
 
-async function lookupSubmission() {
-  const token = document.getElementById('lookup-token').value.trim();
-  const errorEl = document.getElementById('lookup-error');
-  const resultEl = document.getElementById('lookup-result');
-  errorEl.classList.add('hidden');
-  resultEl.classList.add('hidden');
-  if (!token) {
-    errorEl.textContent = '請輸入查詢碼';
-    errorEl.classList.remove('hidden');
-    return;
+function readRecentLookups() {
+  try {
+    const raw = localStorage.getItem(RECENT_LOOKUP_KEY);
+    const list = JSON.parse(raw || '[]');
+    if (!Array.isArray(list)) return [];
+    return list.filter(item => item && item.lookup_token && item.submission_id);
+  } catch (_) {
+    return [];
   }
-  const res = await fetch(`/api/submissions/lookup?token=${encodeURIComponent(token)}`);
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    errorEl.textContent = data.error || '查詢失敗';
-    errorEl.classList.remove('hidden');
-    return;
-  }
+}
+
+function writeRecentLookups(list) {
+  try {
+    localStorage.setItem(RECENT_LOOKUP_KEY, JSON.stringify(list.slice(0, RECENT_LOOKUP_LIMIT)));
+  } catch (_) {}
+}
+
+function rememberLookupRecord(record) {
+  if (!record || !record.lookup_token || !record.submission_id) return;
+  const normalized = {
+    submission_id: Number(record.submission_id),
+    exam_id: Number(record.exam_id || 0) || null,
+    lookup_token: String(record.lookup_token),
+    exam_title: String(record.exam_title || ''),
+    submitted_at: String(record.submitted_at || ''),
+    student_name: String(record.student_name || ''),
+    saved_at: new Date().toISOString()
+  };
+  const current = readRecentLookups();
+  const merged = [normalized, ...current.filter(item =>
+    !(Number(item.submission_id) === normalized.submission_id && String(item.lookup_token) === normalized.lookup_token)
+  )];
+  writeRecentLookups(merged);
+}
+
+function formatDateTime(text) {
+  if (!text) return '—';
+  const d = new Date(text);
+  if (Number.isNaN(d.getTime())) return escHtml(text);
+  return d.toLocaleString('zh-TW', { hour12: false });
+}
+
+function renderLookupSummary(data, token) {
   const pct = data.total_score > 0 ? Math.round(data.score * 100 / data.total_score) : 0;
-  resultEl.innerHTML = `
+  const safeToken = encodeURIComponent(token);
+  return `
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
       <div>
         <p class="text-sm text-gray-500 mb-1">${escHtml(data.exam_title || '試卷')}</p>
@@ -101,11 +138,87 @@ async function lookupSubmission() {
       </div>
     </div>
     <div class="mt-6 flex flex-wrap gap-3">
-      <a href="/result.html?id=${data.id}&token=${encodeURIComponent(token)}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-lg font-medium transition-colors">查看成績明細</a>
-      <a href="/analysis.html?id=${data.id}&token=${encodeURIComponent(token)}" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2 rounded-lg font-medium transition-colors">查看答題分析</a>
+      <a href="/result.html?id=${data.id}&token=${safeToken}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-lg font-medium transition-colors">查看成績明細</a>
+      <a href="/analysis.html?id=${data.id}&token=${safeToken}" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2 rounded-lg font-medium transition-colors">查看答題分析</a>
     </div>
   `;
+}
+
+async function loadMySubmissions() {
+  const listEl = document.getElementById('my-submissions-list');
+  listEl.innerHTML = '<div class="text-center py-6 text-gray-400">載入中...</div>';
+  const res = await fetch('/api/student/submissions?limit=30', { credentials: 'same-origin' });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    listEl.innerHTML = `<div class="text-center py-6 text-red-500">${escHtml(data.error || '載入失敗')}</div>`;
+    return;
+  }
+  const rows = Array.isArray(data.submissions) ? data.submissions : [];
+  if (!rows.length) {
+    listEl.innerHTML = '<div class="text-center py-6 text-gray-400">目前沒有已繳交的作答紀錄</div>';
+    return;
+  }
+  rows.forEach(row => rememberLookupRecord(row));
+  listEl.innerHTML = rows.map(row => {
+    const pct = row.total_score > 0 ? Math.round((row.score || 0) * 100 / row.total_score) : 0;
+    const pctColor = pct >= 80 ? 'text-green-600' : pct >= 60 ? 'text-amber-600' : 'text-red-600';
+    const safeToken = encodeURIComponent(row.lookup_token || '');
+    return `
+      <div class="rounded-xl border border-gray-200 p-4">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <div class="font-semibold text-gray-800">${escHtml(row.exam_title || '試卷')}</div>
+            <div class="text-xs text-gray-500 mt-1">繳交時間：${formatDateTime(row.submitted_at)}</div>
+          </div>
+          <div class="text-right">
+            <div class="text-2xl font-bold ${pctColor}">${pct}%</div>
+            <div class="text-xs text-gray-500">${row.score}/${row.total_score} 分</div>
+          </div>
+        </div>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <a href="/result.html?id=${row.id}&token=${safeToken}" class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm">成績明細</a>
+          <a href="/analysis.html?id=${row.id}&token=${safeToken}" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm">答題分析</a>
+          <button onclick="useLookupToken('${escHtml(row.lookup_token || '')}')" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-600 text-sm hover:bg-gray-50">帶入查詢碼</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function useLookupToken(token) {
+  document.getElementById('lookup-token').value = token || '';
+  lookupSubmission();
+}
+
+async function lookupSubmission() {
+  const token = document.getElementById('lookup-token').value.trim();
+  const errorEl = document.getElementById('lookup-error');
+  const resultEl = document.getElementById('lookup-result');
+  errorEl.classList.add('hidden');
+  resultEl.classList.add('hidden');
+  if (!token) {
+    errorEl.textContent = '請輸入查詢碼';
+    errorEl.classList.remove('hidden');
+    return false;
+  }
+  const res = await fetch(`/api/submissions/lookup?token=${encodeURIComponent(token)}`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    errorEl.textContent = data.error || '查詢失敗';
+    errorEl.classList.remove('hidden');
+    return false;
+  }
+  rememberLookupRecord({
+    submission_id: data.id,
+    exam_id: data.exam_id,
+    lookup_token: token,
+    exam_title: data.exam_title,
+    submitted_at: data.submitted_at,
+    student_name: data.student_name
+  });
+  resultEl.innerHTML = renderLookupSummary(data, token);
   resultEl.classList.remove('hidden');
+  return true;
 }
 
 async function logoutStudent() {
@@ -117,14 +230,25 @@ async function logoutStudent() {
 
 function escHtml(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
-window.addEventListener('pageshow', () => {
-  ensureStudentSession();
+window.addEventListener('pageshow', (event) => {
+  if (!event.persisted) return;
+  ensureStudentSession().then(ok => {
+    if (!ok) return;
+    loadMySubmissions();
+  });
 });
 
 async function initPage() {
   if (!(await ensureStudentSession())) return;
+  await loadMySubmissions();
   if (presetToken) {
     document.getElementById('lookup-token').value = presetToken;
+    lookupSubmission();
+    return;
+  }
+  const recent = readRecentLookups();
+  if (recent.length && recent[0].lookup_token) {
+    document.getElementById('lookup-token').value = recent[0].lookup_token;
     lookupSubmission();
   }
 }

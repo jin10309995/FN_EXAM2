@@ -76,7 +76,7 @@ async function loadExams() {
           <span>📋 ${e.question_count} 題</span>
           <span>⏱ ${e.duration_min} 分鐘</span>
           <span>💯 滿分 ${e.total_score} 分</span>
-          ${e.writing_count > 0 ? `<span class="text-orange-600">✍️ 含寫作/口說（人工批改）</span>` : ''}
+          ${e.writing_count > 0 ? `<span class="text-orange-600">✍️ 含寫作（人工批改）</span>` : ''}
         </div>
       </div>
       <a href="/exam.html?id=${e.id}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-lg font-medium transition-colors text-center">開始作答</a>

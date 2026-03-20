@@ -52,13 +52,8 @@
             <label class="mb-1 block text-sm font-medium text-slate-700">密碼</label>
             <input id="password" type="password" class="w-full rounded-2xl border border-slate-300 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="請輸入密碼">
           </div>
-          <div>
-            <label class="mb-1 block text-sm font-medium text-slate-700">老師 API Key（選填）</label>
-            <input id="teacher-api-key" type="password" class="w-full rounded-2xl border border-slate-300 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="可用 API Key 直接進入老師首頁">
-          </div>
           <p id="login-error" class="hidden text-sm text-rose-600"></p>
           <button onclick="login()" class="w-full rounded-2xl bg-slate-900 px-4 py-3 font-medium text-white transition hover:bg-slate-800">登入系統</button>
-          <button onclick="loginWithApiKey()" class="w-full rounded-2xl border border-indigo-300 bg-indigo-50 px-4 py-3 font-medium text-indigo-700 transition hover:bg-indigo-100">使用 API Key 登入老師</button>
         </div>
       </div>
     </section>
@@ -70,17 +65,43 @@ const role = params.get('role') || '';
 const returnTo = params.get('return_to') || '';
 
 if (role === 'student') {
-  document.getElementById('role-hint').textContent = '登入學生帳號後，會自動進入學生首頁。';
+  document.getElementById('role-hint').textContent = '登入學生帳號後，會自動進入選擇考題。';
 } else if (role === 'teacher') {
   document.getElementById('role-hint').textContent = '登入老師帳號後，會自動進入老師首頁。';
 }
 
-function redirectAfterLogin(defaultUrl) {
-  if (returnTo) {
-    location.replace(returnTo);
+function toSafeRedirectPath(rawUrl) {
+  if (!rawUrl) return '';
+  try {
+    const url = new URL(rawUrl, location.origin);
+    if (url.origin !== location.origin) return '';
+    if (!url.pathname.startsWith('/')) return '';
+    return url.pathname + url.search + url.hash;
+  } catch (_) {
+    return '';
+  }
+}
+
+function shouldUseReturnTo(loginRole, safeReturnTo) {
+  if (!safeReturnTo) return false;
+  const path = safeReturnTo.split('?')[0];
+  if (path === '/login.html' || path === '/student-login.html' || path === '/teacher-login.html') {
+    return false;
+  }
+  if ((loginRole || role) === 'student' && (path === '/student-home.html' || path === '/student/home')) {
+    return false;
+  }
+  return true;
+}
+
+function redirectAfterLogin(defaultUrl, loginRole = '') {
+  const safeDefault = toSafeRedirectPath(defaultUrl) || '/';
+  const safeReturnTo = toSafeRedirectPath(returnTo);
+  if (shouldUseReturnTo(loginRole, safeReturnTo)) {
+    location.replace(safeReturnTo);
     return;
   }
-  location.replace(defaultUrl || '/');
+  location.replace(safeDefault);
 }
 
 async function login() {
@@ -107,33 +128,7 @@ async function login() {
     return;
   }
 
-  sessionStorage.removeItem('teacher_api_key');
-  redirectAfterLogin(data.redirect_to || '/');
-}
-
-async function loginWithApiKey() {
-  const key = document.getElementById('teacher-api-key').value.trim();
-  const errorEl = document.getElementById('login-error');
-  errorEl.classList.add('hidden');
-  if (!key) {
-    errorEl.textContent = '請輸入老師 API Key';
-    errorEl.classList.remove('hidden');
-    return;
-  }
-  const res = await fetch('/api/admin/session', {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', 'x-api-key': key },
-    body: JSON.stringify({ api_key: key })
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    errorEl.textContent = data.error || 'API Key 登入失敗';
-    errorEl.classList.remove('hidden');
-    return;
-  }
-  sessionStorage.setItem('teacher_api_key', key);
-  redirectAfterLogin('/admin.html');
+  redirectAfterLogin(data.redirect_to || '/', data.role || role);
 }
 </script>
 </body>

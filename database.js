@@ -451,7 +451,7 @@ function hashPassword(password) {
   const adminCount = db.prepare(`SELECT COUNT(*) AS c FROM admins`).get().c;
   if (adminCount === 0) {
     const username = process.env.ADMIN_USERNAME || 'admin';
-    const password = process.env.ADMIN_PASSWORD || process.env.ADMIN_API_KEY || 'admin1234';
+    const password = process.env.ADMIN_PASSWORD || 'admin1234';
     db.prepare(`
       INSERT INTO admins (username, password_hash, display_name, role)
       VALUES (?, ?, ?, 'teacher')

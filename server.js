@@ -80,7 +80,8 @@ app.get('/', (req, res) => res.redirect('/login.html'));
 app.get('/login', (req, res) => res.redirect('/login.html'));
 app.get('/student', (req, res) => res.redirect('/login.html?role=student'));
 app.get('/teacher', (req, res) => res.redirect('/login.html?role=teacher'));
-app.get('/student/home', (req, res) => res.redirect('/student-home.html'));
+app.get('/student/home', (req, res) => res.redirect('/exam-list.html'));
+app.get('/student-home.html', (req, res) => res.redirect('/exam-list.html'));
 app.get('/teacher/home', (req, res) => res.redirect('/admin.html'));
 
 app.use(express.static(path.join(__dirname, 'public')));
@@ -142,16 +143,7 @@ function requireAdmin(req, res, next) {
     req.adminSession = auth.session;
     return next();
   }
-  const adminKey = process.env.ADMIN_API_KEY;
-  if (adminKey) {
-    const key = req.headers['x-api-key'] || (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-    if (key && key === adminKey) {
-      req.admin = { id: 0, username: 'api-key-admin', display_name: 'Teacher API Key', role: 'teacher' };
-      return next();
-    }
-    return res.status(401).json({ error: '未授權，需要登入或老師金鑰' });
-  }
-  next();
+  return res.status(401).json({ error: '尚未登入' });
 }
 
 function requireAdminRole(...roles) {
@@ -287,21 +279,13 @@ function hashPassword(password) {
   return crypto.createHash('sha256').update(String(password || '')).digest('hex');
 }
 
-app.post('/api/admin/session', (req, res) => {
-  const auth = getAdminAuth(req);
-  if (auth.ok) {
-    return res.json({ success: true, auth_mode: 'session', admin: auth.admin, expires_at: auth.session.expires_at });
-  }
-  const adminKey = process.env.ADMIN_API_KEY;
-  const key = req.headers['x-api-key'] || req.body?.api_key;
-  if (!adminKey || key === adminKey) {
-    return res.json({
-      success: true,
-      auth_mode: adminKey ? 'api_key' : 'open',
-      admin: { username: 'api-key-admin', display_name: 'Teacher API Key', role: 'teacher' }
-    });
-  }
-  return res.status(401).json({ error: '尚未登入' });
+app.post('/api/admin/session', requireAdmin, (req, res) => {
+  res.json({
+    success: true,
+    auth_mode: 'session',
+    admin: req.admin || null,
+    expires_at: req.adminSession?.expires_at || null
+  });
 });
 
 app.post('/api/student/login', (req, res) => {
@@ -371,7 +355,7 @@ app.post('/api/login', (req, res) => {
     return res.json({
       success: true,
       role: 'student',
-      redirect_to: '/student-home.html',
+      redirect_to: '/exam-list.html',
       profile: {
         name: student.student_name,
         username: student.username,
@@ -1764,6 +1748,38 @@ app.get('/api/submissions/lookup', (req, res) => {
   `).get(String(token));
   if (!row) return res.status(404).json({ error: '找不到符合的作答紀錄' });
   res.json(row);
+});
+
+app.get('/api/student/submissions', requireStudent, (req, res) => {
+  const studentName = String(req.student?.name || '').trim();
+  const studentId = String(req.student?.student_id || '').trim();
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 30));
+  if (!studentName && !studentId) return res.json({ submissions: [] });
+  const rows = studentId
+    ? db.prepare(`
+      SELECT s.id, s.exam_id, s.student_name, s.student_id, s.score, s.total_score,
+             s.submitted_at, s.status, s.lookup_token, e.title AS exam_title
+      FROM submissions s
+      JOIN exams e ON e.id = s.exam_id
+      WHERE s.status = 'submitted'
+        AND s.student_id = ?
+      ORDER BY s.submitted_at DESC, s.id DESC
+      LIMIT ?
+    `).all(studentId, limit)
+    : db.prepare(`
+      SELECT s.id, s.exam_id, s.student_name, s.student_id, s.score, s.total_score,
+             s.submitted_at, s.status, s.lookup_token, e.title AS exam_title
+      FROM submissions s
+      JOIN exams e ON e.id = s.exam_id
+      WHERE s.status = 'submitted'
+        AND s.student_name = ?
+      ORDER BY s.submitted_at DESC, s.id DESC
+      LIMIT ?
+    `).all(studentName, limit);
+  res.json({
+    student: req.student,
+    submissions: rows
+  });
 });
 
 app.get('/api/submissions/:id', (req, res) => {
