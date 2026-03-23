@@ -93,6 +93,32 @@ const submitLimiter = rateLimit({
   message: { error: '提交次數過多，請稍後再試' }
 });
 
+// 登入專用速率限制（雙層）：
+// 1) 同 IP：15 分鐘內最多 30 次
+// 2) 同 IP + 帳號：15 分鐘內最多 6 次
+const loginIpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  message: { error: '登入嘗試過於頻繁，請稍後再試' }
+});
+
+function normalizeLoginName(req) {
+  return String(req.body?.username || '').trim().toLowerCase() || '__empty__';
+}
+
+const loginAccountLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 6,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => `${req.ip}:${normalizeLoginName(req)}`,
+  message: { error: '此帳號登入嘗試過多，請稍後再試' }
+});
+
 // 一般 API 速率限制：每個 IP 每分鐘最多 200 次
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -210,7 +236,7 @@ function getStudentAuth(req) {
   const token = parseCookies(req).student_session || '';
   if (!token) return { ok: false };
   const session = db.prepare(`
-    SELECT id, student_name, student_id, expires_at
+    SELECT id, student_name, student_id, student_account_id, expires_at
     FROM student_sessions
     WHERE token_hash = ?
   `).get(hashStudentSessionToken(token));
@@ -222,7 +248,11 @@ function getStudentAuth(req) {
   db.prepare(`UPDATE student_sessions SET last_seen_at = datetime('now','localtime') WHERE id = ?`).run(session.id);
   return {
     ok: true,
-    session: { id: session.id, expires_at: session.expires_at },
+    session: {
+      id: session.id,
+      student_account_id: session.student_account_id || null,
+      expires_at: session.expires_at
+    },
     student: {
       name: session.student_name,
       student_id: session.student_id || ''
@@ -238,11 +268,50 @@ function requireStudent(req, res, next) {
   next();
 }
 
+function requireStudentAccount(req, res, next) {
+  const accountId = parseInt(req.studentSession?.student_account_id, 10);
+  if (!Number.isInteger(accountId) || accountId <= 0) {
+    return res.status(401).json({ error: '此功能需使用學生帳號密碼登入' });
+  }
+  next();
+}
+
 function getStudentIdentity(req, payload = {}) {
   const auth = getStudentAuth(req);
   const name = String(payload.student_name || auth.student?.name || '').trim();
   const studentId = String(payload.student_id || auth.student?.student_id || '').trim();
   return { name, student_id: studentId };
+}
+
+function resolveStudentSubmissionOwner(req) {
+  const accountId = parseInt(req.studentSession?.student_account_id, 10);
+  if (Number.isInteger(accountId) && accountId > 0) {
+    return {
+      account_id: accountId,
+      session_id: req.studentSession?.id || null,
+      whereSql: 'student_account_id = ?',
+      params: [accountId]
+    };
+  }
+  const sessionId = parseInt(req.studentSession?.id, 10);
+  if (!Number.isInteger(sessionId) || sessionId <= 0) {
+    return null;
+  }
+  return {
+    account_id: null,
+    session_id: sessionId,
+    whereSql: 'student_session_id = ?',
+    params: [sessionId]
+  };
+}
+
+function matchesStudentSubmissionOwner(req, submission) {
+  if (!submission) return false;
+  const owner = resolveStudentSubmissionOwner(req);
+  if (!owner) return false;
+  if (owner.account_id && Number(submission.student_account_id || 0) === owner.account_id) return true;
+  if (!owner.account_id && Number(submission.student_session_id || 0) === owner.session_id) return true;
+  return false;
 }
 
 function getAdminAuth(req) {
@@ -275,8 +344,68 @@ function getAdminAuth(req) {
   };
 }
 
+const LEGACY_SHA256_HEX_RE = /^[a-f0-9]{64}$/i;
+const PASSWORD_HASH_SCHEME = 'scrypt-v1';
+const SCRYPT_N = 16384;
+const SCRYPT_R = 8;
+const SCRYPT_P = 1;
+const SCRYPT_KEYLEN = 64;
+const SCRYPT_MAXMEM = 64 * 1024 * 1024;
+
 function hashPassword(password) {
-  return crypto.createHash('sha256').update(String(password || '')).digest('hex');
+  const salt = crypto.randomBytes(16);
+  const derived = crypto.scryptSync(String(password || ''), salt, SCRYPT_KEYLEN, {
+    N: SCRYPT_N,
+    r: SCRYPT_R,
+    p: SCRYPT_P,
+    maxmem: SCRYPT_MAXMEM
+  });
+  return `${PASSWORD_HASH_SCHEME}$${SCRYPT_N}$${SCRYPT_R}$${SCRYPT_P}$${salt.toString('base64')}$${derived.toString('base64')}`;
+}
+
+function safeEqual(a, b) {
+  if (!Buffer.isBuffer(a) || !Buffer.isBuffer(b)) return false;
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+function verifyPassword(password, storedHash) {
+  const plain = String(password || '');
+  const hash = String(storedHash || '');
+  if (!hash) return { ok: false, needsUpgrade: false };
+
+  if (hash.startsWith(`${PASSWORD_HASH_SCHEME}$`)) {
+    const parts = hash.split('$');
+    if (parts.length !== 6) return { ok: false, needsUpgrade: false };
+    const n = parseInt(parts[1], 10);
+    const r = parseInt(parts[2], 10);
+    const p = parseInt(parts[3], 10);
+    if (![n, r, p].every(v => Number.isInteger(v) && v > 0)) {
+      return { ok: false, needsUpgrade: false };
+    }
+    try {
+      const salt = Buffer.from(parts[4], 'base64');
+      const expected = Buffer.from(parts[5], 'base64');
+      const derived = crypto.scryptSync(plain, salt, expected.length || SCRYPT_KEYLEN, {
+        N: n,
+        r,
+        p,
+        maxmem: SCRYPT_MAXMEM
+      });
+      return { ok: safeEqual(derived, expected), needsUpgrade: false };
+    } catch (_) {
+      return { ok: false, needsUpgrade: false };
+    }
+  }
+
+  if (LEGACY_SHA256_HEX_RE.test(hash)) {
+    const legacy = crypto.createHash('sha256').update(plain).digest();
+    const stored = Buffer.from(hash.toLowerCase(), 'hex');
+    const ok = safeEqual(legacy, stored);
+    return { ok, needsUpgrade: ok };
+  }
+
+  return { ok: false, needsUpgrade: false };
 }
 
 app.post('/api/admin/session', requireAdmin, (req, res) => {
@@ -289,25 +418,14 @@ app.post('/api/admin/session', requireAdmin, (req, res) => {
 });
 
 app.post('/api/student/login', (req, res) => {
-  const { student_name, student_id } = req.body || {};
-  const name = String(student_name || '').trim();
-  const studentId = String(student_id || '').trim();
-  if (!name) return res.status(400).json({ error: '請提供學生姓名' });
-  const token = crypto.randomBytes(32).toString('hex');
-  const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 12).toISOString();
-  db.prepare(`
-    INSERT INTO student_sessions (student_name, student_id, token_hash, expires_at)
-    VALUES (?, ?, ?, ?)
-  `).run(name, studentId || null, hashStudentSessionToken(token), expiresAt);
-  setStudentSessionCookie(res, token, expiresAt);
-  res.json({
-    success: true,
-    student: { name, student_id: studentId },
-    expires_at: expiresAt
+  clearStudentSessionCookie(res);
+  return res.status(410).json({
+    error: '匿名學生登入已停用，請使用帳號密碼登入',
+    redirect_to: '/login.html?role=student'
   });
 });
 
-app.post('/api/login', (req, res) => {
+app.post('/api/login', loginIpLimiter, loginAccountLimiter, (req, res) => {
   const { username, password } = req.body || {};
   const loginName = String(username || '').trim();
   if (!loginName || !password) return res.status(400).json({ error: '請提供帳號與密碼' });
@@ -317,7 +435,15 @@ app.post('/api/login', (req, res) => {
     FROM admins
     WHERE username = ?
   `).get(loginName);
-  if (admin && admin.is_active && admin.password_hash === hashPassword(password)) {
+  const adminPwd = admin ? verifyPassword(password, admin.password_hash) : { ok: false, needsUpgrade: false };
+  if (admin && admin.is_active && adminPwd.ok) {
+    if (adminPwd.needsUpgrade) {
+      db.prepare(`
+        UPDATE admins
+        SET password_hash = ?, updated_at = datetime('now','localtime')
+        WHERE id = ?
+      `).run(hashPassword(password), admin.id);
+    }
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 12).toISOString();
     db.prepare(`
@@ -343,13 +469,21 @@ app.post('/api/login', (req, res) => {
     FROM students
     WHERE username = ?
   `).get(loginName);
-  if (student && student.is_active && student.password_hash === hashPassword(password)) {
+  const studentPwd = student ? verifyPassword(password, student.password_hash) : { ok: false, needsUpgrade: false };
+  if (student && student.is_active && studentPwd.ok) {
+    if (studentPwd.needsUpgrade) {
+      db.prepare(`
+        UPDATE students
+        SET password_hash = ?, updated_at = datetime('now','localtime')
+        WHERE id = ?
+      `).run(hashPassword(password), student.id);
+    }
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 12).toISOString();
     db.prepare(`
-      INSERT INTO student_sessions (student_name, student_id, token_hash, expires_at)
-      VALUES (?, ?, ?, ?)
-    `).run(student.student_name, student.student_id || null, hashStudentSessionToken(token), expiresAt);
+      INSERT INTO student_sessions (student_name, student_id, student_account_id, token_hash, expires_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(student.student_name, student.student_id || null, student.id, hashStudentSessionToken(token), expiresAt);
     setStudentSessionCookie(res, token, expiresAt);
     clearAdminSessionCookie(res);
     return res.json({
@@ -380,7 +514,7 @@ app.post('/api/student/logout', requireStudent, (req, res) => {
   res.json({ success: true });
 });
 
-app.post('/api/admin/login', (req, res) => {
+app.post('/api/admin/login', loginIpLimiter, loginAccountLimiter, (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) return res.status(400).json({ error: '請提供帳號與密碼' });
   const admin = db.prepare(`
@@ -388,8 +522,16 @@ app.post('/api/admin/login', (req, res) => {
     FROM admins
     WHERE username = ?
   `).get(String(username).trim());
-  if (!admin || !admin.is_active || admin.password_hash !== hashPassword(password)) {
+  const adminPwd = admin ? verifyPassword(password, admin.password_hash) : { ok: false, needsUpgrade: false };
+  if (!admin || !admin.is_active || !adminPwd.ok) {
     return res.status(401).json({ error: '帳號或密碼錯誤' });
+  }
+  if (adminPwd.needsUpgrade) {
+    db.prepare(`
+      UPDATE admins
+      SET password_hash = ?, updated_at = datetime('now','localtime')
+      WHERE id = ?
+    `).run(hashPassword(password), admin.id);
   }
   const token = crypto.randomBytes(32).toString('hex');
   const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 12).toISOString();
@@ -894,6 +1036,15 @@ function submissionAccessClause(token) {
   return token ? { ok: true } : { ok: false, code: 403, error: '缺少查詢碼' };
 }
 
+const STUDENT_SAFE_QUESTION_SELECT = `
+  q.id, q.subject_id, q.type, q.difficulty, q.content,
+  q.option_a, q.option_b, q.option_c, q.option_d,
+  q.explanation, q.tags, q.grade_level,
+  q.audio_url, q.audio_transcript, q.image_url,
+  q.passage_id, q.passage_content,
+  s.name as subject_name
+`;
+
 backfillQuestionGovernance();
 
 function dedupeQuestionsByContent(questions) {
@@ -916,7 +1067,7 @@ function dedupeQuestionsByContent(questions) {
 }
 
 // ─── Random Questions ────────────────────────────────────────────────────────
-app.get('/api/questions/random', (req, res) => {
+app.get('/api/questions/random', requireAdmin, (req, res) => {
   const { subject_id, type, difficulty_min, difficulty_max, grade_level, count = 10, weighted, exclude_ids = '' } = req.query;
   const where = ['q.is_archived = 0'];
   const params = [];
@@ -948,7 +1099,7 @@ app.get('/api/questions/random', (req, res) => {
 });
 
 // ─── Questions ───────────────────────────────────────────────────────────────
-app.get('/api/questions', (req, res) => {
+app.get('/api/questions', requireAdmin, (req, res) => {
   const { subject_id, type, difficulty, search, grade_level, include_archived, page = 1, limit = 20, review_status } = req.query;
   const where = [];
   const params = [];
@@ -973,7 +1124,7 @@ app.get('/api/questions', (req, res) => {
   res.json({ total, page: pageNum, limit: limitNum, data });
 });
 
-app.get('/api/questions/:id', (req, res) => {
+app.get('/api/questions/:id', requireAdmin, (req, res) => {
   const row = db.prepare(`
     SELECT q.*, s.name as subject_name FROM questions q
     JOIN subjects s ON s.id = q.subject_id WHERE q.id = ?
@@ -1267,6 +1418,11 @@ function getPublicExamPayload(req, res) {
   const questions = db.prepare(`
     SELECT eq.sort_order, eq.score, q.id, q.type, q.content, q.subject_id,
            q.option_a, q.option_b, q.option_c, q.option_d, q.difficulty,
+           CASE
+             WHEN q.type = 'cloze' AND TRIM(COALESCE(q.answer, '')) <> ''
+               THEN LENGTH(q.answer) - LENGTH(REPLACE(q.answer, '|', '')) + 1
+             ELSE NULL
+           END AS blank_count,
            q.audio_url, q.audio_transcript, q.image_url, q.passage_id, q.passage_content,
            s.name as subject_name
     FROM exam_questions eq
@@ -1296,10 +1452,13 @@ app.get('/api/public/exams/:id/take', (req, res) => {
   res.json(payload);
 });
 
-app.post('/api/public/exams/:id/session', (req, res) => {
+app.post('/api/public/exams/:id/session', requireStudent, requireStudentAccount, (req, res) => {
   const { access_code } = req.body || {};
-  const { name: student_name, student_id } = getStudentIdentity(req, req.body || {});
+  const student_name = String(req.student?.name || '').trim();
+  const student_id = String(req.student?.student_id || '').trim();
   if (!student_name) return res.status(400).json({ error: '缺少 student_name' });
+  const owner = resolveStudentSubmissionOwner(req);
+  if (!owner) return res.status(401).json({ error: '請先登入學生帳號' });
   const exam = db.prepare('SELECT * FROM exams WHERE id = ?').get(req.params.id);
   const availability = examAvailability(exam, { ...req, body: { access_code } });
   if (!availability.ok) return res.status(availability.code).json({ error: availability.error, requires_access_code: availability.requires_access_code || false });
@@ -1309,13 +1468,10 @@ app.post('/api/public/exams/:id/session', (req, res) => {
     FROM submissions
     WHERE exam_id = ?
       AND status = 'in_progress'
-      AND (
-        (? <> '' AND student_id = ?)
-        OR (? <> '' AND student_name = ?)
-      )
+      AND ${owner.whereSql}
     ORDER BY id DESC
     LIMIT 1
-  `).get(req.params.id, String(student_id || ''), String(student_id || ''), String(student_name || ''), String(student_name || ''));
+  `).get(req.params.id, ...owner.params);
 
   if (existing && exam.allow_resume) {
     return res.json({
@@ -1334,20 +1490,27 @@ app.post('/api/public/exams/:id/session', (req, res) => {
     FROM submissions
     WHERE exam_id = ?
       AND status = 'submitted'
-      AND (
-        (? <> '' AND student_id = ?)
-        OR (? <> '' AND student_name = ?)
-      )
-  `).get(req.params.id, String(student_id || ''), String(student_id || ''), String(student_name || ''), String(student_name || '')).cnt;
+      AND ${owner.whereSql}
+  `).get(req.params.id, ...owner.params).cnt;
   if ((exam.max_attempts || 0) > 0 && priorAttempts >= exam.max_attempts) {
     return res.status(403).json({ error: '已達此試卷可作答次數上限' });
   }
 
   const lookupToken = crypto.randomBytes(12).toString('hex');
   const created = db.prepare(`
-    INSERT INTO submissions (exam_id, student_name, student_id, answers, score, total_score, lookup_token, started_at, last_seen_at, status)
-    VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?, 'in_progress')
-  `).run(req.params.id, student_name, student_id || null, '{}', lookupToken, datetimeNow(), datetimeNow());
+    INSERT INTO submissions (exam_id, student_name, student_id, student_account_id, student_session_id, answers, score, total_score, lookup_token, started_at, last_seen_at, status)
+    VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, 'in_progress')
+  `).run(
+    req.params.id,
+    student_name,
+    student_id || null,
+    owner.account_id || null,
+    owner.session_id || null,
+    '{}',
+    lookupToken,
+    datetimeNow(),
+    datetimeNow()
+  );
   res.json({
     resumed: false,
     submission_id: created.lastInsertRowid,
@@ -1561,11 +1724,12 @@ app.post('/api/questions/batch', requireAdmin, (req, res) => {
 });
 
 // ─── Submissions ─────────────────────────────────────────────────────────────
-app.put('/api/public/submissions/:id/progress', (req, res) => {
+app.put('/api/public/submissions/:id/progress', requireStudent, requireStudentAccount, (req, res) => {
   const { lookup_token, answers } = req.body || {};
   if (!lookup_token) return res.status(400).json({ error: '缺少查詢碼' });
   const submission = db.prepare(`SELECT * FROM submissions WHERE id = ?`).get(req.params.id);
   if (!submission) return res.status(404).json({ error: '找不到作答 session' });
+  if (!matchesStudentSubmissionOwner(req, submission)) return res.status(403).json({ error: '無權限操作此作答紀錄' });
   if (submission.lookup_token !== lookup_token) return res.status(403).json({ error: '查詢碼錯誤' });
   if (submission.status !== 'in_progress') return res.status(400).json({ error: '此作答已完成，無法再更新進度' });
   const now = datetimeNow();
@@ -1577,10 +1741,13 @@ app.put('/api/public/submissions/:id/progress', (req, res) => {
   res.json({ success: true, last_seen_at: now });
 });
 
-app.post('/api/exams/:id/submit', submitLimiter, (req, res) => {
+app.post('/api/exams/:id/submit', submitLimiter, requireStudent, requireStudentAccount, (req, res) => {
   const { answers, access_code, submission_id, lookup_token } = req.body;
-  const { name: student_name, student_id } = getStudentIdentity(req, req.body || {});
+  const student_name = String(req.student?.name || '').trim();
+  const student_id = String(req.student?.student_id || '').trim();
   if (!student_name || !answers) return res.status(400).json({ error: '缺少必要資料' });
+  const owner = resolveStudentSubmissionOwner(req);
+  if (!owner) return res.status(401).json({ error: '請先登入學生帳號' });
 
   const exam = db.prepare('SELECT * FROM exams WHERE id = ?').get(req.params.id);
   const availability = examAvailability(exam, { ...req, body: { access_code } });
@@ -1589,6 +1756,7 @@ app.post('/api/exams/:id/submit', submitLimiter, (req, res) => {
     ? db.prepare(`SELECT * FROM submissions WHERE id = ? AND exam_id = ?`).get(submission_id, req.params.id)
     : null;
   if (existingSubmission) {
+    if (!matchesStudentSubmissionOwner(req, existingSubmission)) return res.status(403).json({ error: '無權限操作此作答紀錄' });
     if (existingSubmission.lookup_token !== lookup_token) return res.status(403).json({ error: '查詢碼錯誤' });
     if (existingSubmission.status === 'submitted') return res.status(400).json({ error: '此作答已經繳交' });
   }
@@ -1597,11 +1765,8 @@ app.post('/api/exams/:id/submit', submitLimiter, (req, res) => {
     FROM submissions
     WHERE exam_id = ?
       AND status = 'submitted'
-      AND (
-        (? <> '' AND student_id = ?)
-        OR (? <> '' AND student_name = ?)
-      )
-  `).get(req.params.id, String(student_id || ''), String(student_id || ''), String(student_name || ''), String(student_name || '')).cnt;
+      AND ${owner.whereSql}
+  `).get(req.params.id, ...owner.params).cnt;
   if ((exam.max_attempts || 0) > 0 && priorAttempts >= exam.max_attempts && !existingSubmission) {
     return res.status(403).json({ error: '已達此試卷可作答次數上限' });
   }
@@ -1656,19 +1821,40 @@ app.post('/api/exams/:id/submit', submitLimiter, (req, res) => {
       db.prepare(`DELETE FROM answer_details WHERE submission_id = ?`).run(existingSubmission.id);
       db.prepare(`
         UPDATE submissions
-        SET student_name = ?, student_id = ?, answers = ?, score = ?, total_score = ?, last_seen_at = ?, status = 'submitted'
+        SET student_name = ?, student_id = ?, student_account_id = ?, student_session_id = ?,
+            answers = ?, score = ?, total_score = ?, last_seen_at = ?, status = 'submitted'
         WHERE id = ?
-      `).run(student_name, student_id || null, JSON.stringify(answers), earnedScore, totalScore, now, existingSubmission.id);
+      `).run(
+        student_name,
+        student_id || null,
+        owner.account_id || null,
+        owner.session_id || null,
+        JSON.stringify(answers),
+        earnedScore,
+        totalScore,
+        now,
+        existingSubmission.id
+      );
       submissionRowId = existingSubmission.id;
       persistedLookupToken = existingSubmission.lookup_token;
     } else {
       persistedLookupToken = crypto.randomBytes(12).toString('hex');
       const sub = db.prepare(`
-        INSERT INTO submissions (exam_id, student_name, student_id, answers, score, total_score, lookup_token, started_at, last_seen_at, status)
-        VALUES (?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO submissions (exam_id, student_name, student_id, student_account_id, student_session_id, answers, score, total_score, lookup_token, started_at, last_seen_at, status)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
       `).run(
-        req.params.id, student_name, student_id||null, JSON.stringify(answers), earnedScore, totalScore,
-        persistedLookupToken, now, now, 'submitted'
+        req.params.id,
+        student_name,
+        student_id || null,
+        owner.account_id || null,
+        owner.session_id || null,
+        JSON.stringify(answers),
+        earnedScore,
+        totalScore,
+        persistedLookupToken,
+        now,
+        now,
+        'submitted'
       );
       submissionRowId = sub.lastInsertRowid;
     }
@@ -1698,10 +1884,41 @@ app.post('/api/exams/:id/submit', submitLimiter, (req, res) => {
   });
 });
 
-app.post('/api/public/audio/upload', (req, res, next) => {
+function removeUploadedFile(file) {
+  if (!file || !file.path) return;
+  fs.unlink(file.path, () => {});
+}
+
+app.post('/api/public/audio/upload', requireStudent, requireStudentAccount, (req, res) => {
   upload.single('audio')(req, res, (err) => {
     if (err) return res.status(400).json({ error: err.message });
     if (!req.file) return res.status(400).json({ error: '未收到音訊檔案' });
+
+    const submissionId = parseInt(req.body?.submission_id, 10);
+    const lookupToken = String(req.body?.lookup_token || '').trim();
+    if (!Number.isInteger(submissionId) || submissionId <= 0 || !lookupToken) {
+      removeUploadedFile(req.file);
+      return res.status(400).json({ error: '缺少或無效的 submission_id / lookup_token' });
+    }
+
+    const submission = db.prepare(`SELECT * FROM submissions WHERE id = ?`).get(submissionId);
+    if (!submission) {
+      removeUploadedFile(req.file);
+      return res.status(404).json({ error: '找不到作答紀錄' });
+    }
+    if (!matchesStudentSubmissionOwner(req, submission)) {
+      removeUploadedFile(req.file);
+      return res.status(403).json({ error: '無權限操作此作答紀錄' });
+    }
+    if (submission.lookup_token !== lookupToken) {
+      removeUploadedFile(req.file);
+      return res.status(403).json({ error: '查詢碼錯誤' });
+    }
+    if (submission.status !== 'in_progress') {
+      removeUploadedFile(req.file);
+      return res.status(400).json({ error: '此作答已完成，無法再上傳音訊' });
+    }
+
     const audioUrl = `/audio/${req.file.filename}`;
     res.json({ audio_url: audioUrl, filename: req.file.filename });
   });
@@ -1750,32 +1967,20 @@ app.get('/api/submissions/lookup', (req, res) => {
   res.json(row);
 });
 
-app.get('/api/student/submissions', requireStudent, (req, res) => {
-  const studentName = String(req.student?.name || '').trim();
-  const studentId = String(req.student?.student_id || '').trim();
+app.get('/api/student/submissions', requireStudent, requireStudentAccount, (req, res) => {
+  const owner = resolveStudentSubmissionOwner(req);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 30));
-  if (!studentName && !studentId) return res.json({ submissions: [] });
-  const rows = studentId
-    ? db.prepare(`
-      SELECT s.id, s.exam_id, s.student_name, s.student_id, s.score, s.total_score,
-             s.submitted_at, s.status, s.lookup_token, e.title AS exam_title
-      FROM submissions s
-      JOIN exams e ON e.id = s.exam_id
-      WHERE s.status = 'submitted'
-        AND s.student_id = ?
-      ORDER BY s.submitted_at DESC, s.id DESC
-      LIMIT ?
-    `).all(studentId, limit)
-    : db.prepare(`
-      SELECT s.id, s.exam_id, s.student_name, s.student_id, s.score, s.total_score,
-             s.submitted_at, s.status, s.lookup_token, e.title AS exam_title
-      FROM submissions s
-      JOIN exams e ON e.id = s.exam_id
-      WHERE s.status = 'submitted'
-        AND s.student_name = ?
-      ORDER BY s.submitted_at DESC, s.id DESC
-      LIMIT ?
-    `).all(studentName, limit);
+  if (!owner) return res.json({ student: req.student, submissions: [] });
+  const rows = db.prepare(`
+    SELECT s.id, s.exam_id, s.student_name, s.student_id, s.score, s.total_score,
+           s.submitted_at, s.status, s.lookup_token, e.title AS exam_title
+    FROM submissions s
+    JOIN exams e ON e.id = s.exam_id
+    WHERE s.status = 'submitted'
+      AND ${owner.whereSql}
+    ORDER BY s.submitted_at DESC, s.id DESC
+    LIMIT ?
+  `).all(...owner.params, limit);
   res.json({
     student: req.student,
     submissions: rows
@@ -1789,7 +1994,7 @@ app.get('/api/submissions/:id', (req, res) => {
   if (!sub) return res.status(404).json({ error: '找不到作答紀錄' });
   if (sub.lookup_token !== token) return res.status(403).json({ error: '查詢碼錯誤' });
   const details = db.prepare(`
-    SELECT ad.*, q.content, q.answer as correct_answer, q.explanation, q.type,
+    SELECT ad.*, q.content, q.explanation, q.type,
            q.option_a, q.option_b, q.option_c, q.option_d
     FROM answer_details ad JOIN questions q ON q.id = ad.question_id
     WHERE ad.submission_id = ?
@@ -1807,7 +2012,7 @@ app.get('/api/submissions/:id/analysis', (req, res) => {
 
   const exam = db.prepare('SELECT title FROM exams WHERE id = ?').get(sub.exam_id);
   const details = db.prepare(`
-    SELECT ad.*, q.content, q.answer as correct_answer, q.explanation, q.type,
+    SELECT ad.*, q.content, q.explanation, q.type,
            q.difficulty, q.subject_id, s.name as subject_name,
            q.option_a, q.option_b, q.option_c, q.option_d
     FROM answer_details ad
@@ -1851,7 +2056,7 @@ app.get('/api/submissions/:id/analysis', (req, res) => {
   // 弱點題目（答錯的題目）
   const weakQuestions = gradedDetails.filter(d => !d.is_correct).map(d => ({
     content: d.content, type: d.type, difficulty: d.difficulty,
-    subject_name: d.subject_name, correct_answer: d.correct_answer,
+    subject_name: d.subject_name,
     given_answer: d.given_answer, explanation: d.explanation,
     option_a: d.option_a, option_b: d.option_b, option_c: d.option_c, option_d: d.option_d
   }));
@@ -2173,14 +2378,55 @@ app.get('/api/analytics/question-quality', requireAdmin, (req, res) => {
 });
 
 // GET student ability profile using Rasch model (admin)
-app.get('/api/analytics/student-ability', requireAdmin, (req, res) => {
-  const { student_name, student_id } = req.query;
-  if (!student_name && !student_id) return res.status(400).json({ error: '請提供 student_name 或 student_id' });
-  const where = ['1=1'];
+function resolveStudentAccountForAnalytics(query = {}) {
+  const rawAccountId = String(query.student_account_id || '').trim();
+  const studentName = String(query.student_name || '').trim();
+  const studentId = String(query.student_id || '').trim();
+
+  if (rawAccountId) {
+    const accountId = parseInt(rawAccountId, 10);
+    if (!Number.isInteger(accountId) || accountId <= 0) {
+      return { ok: false, code: 400, error: 'student_account_id 格式無效' };
+    }
+    const account = db.prepare(`
+      SELECT id, username, student_name, student_id
+      FROM students
+      WHERE id = ?
+    `).get(accountId);
+    if (!account) return { ok: false, code: 404, error: '找不到此學生帳號' };
+    return { ok: true, account };
+  }
+
+  if (!studentName && !studentId) {
+    return { ok: false, code: 400, error: '請提供 student_account_id 或 student_name / student_id' };
+  }
+  const where = [];
   const params = [];
-  if (student_name) { where.push('student_name = ?'); params.push(student_name); }
-  if (student_id)   { where.push('student_id = ?');   params.push(student_id); }
-  const subs = db.prepare(`SELECT id FROM submissions WHERE ${where.join(' AND ')}`).all(...params);
+  if (studentName) { where.push('student_name = ?'); params.push(studentName); }
+  if (studentId)   { where.push('student_id = ?');   params.push(studentId); }
+  const matches = db.prepare(`
+    SELECT id, username, student_name, student_id
+    FROM students
+    WHERE ${where.join(' AND ')}
+    ORDER BY id
+  `).all(...params);
+  if (!matches.length) return { ok: false, code: 404, error: '找不到此學生帳號' };
+  if (matches.length > 1) {
+    return { ok: false, code: 409, error: '符合條件的學生帳號超過一筆，請改用 student_account_id' };
+  }
+  return { ok: true, account: matches[0] };
+}
+
+app.get('/api/analytics/student-ability', requireAdmin, (req, res) => {
+  const resolved = resolveStudentAccountForAnalytics(req.query || {});
+  if (!resolved.ok) return res.status(resolved.code).json({ error: resolved.error });
+  const account = resolved.account;
+  const subs = db.prepare(`
+    SELECT id
+    FROM submissions
+    WHERE status = 'submitted'
+      AND student_account_id = ?
+  `).all(account.id);
   if (!subs.length) return res.status(404).json({ error: '找不到此學生的作答紀錄' });
   const ids = subs.map(s => s.id);
   const details = db.prepare(`
@@ -2206,8 +2452,9 @@ app.get('/api/analytics/student-ability', requireAdmin, (req, res) => {
   })).sort((a, b) => a.subject_id - b.subject_id);
 
   res.json({
-    student_name: student_name || '',
-    student_id: student_id || '',
+    student_account_id: account.id,
+    student_name: account.student_name || '',
+    student_id: account.student_id || '',
     total_responses: details.length,
     exam_count: subs.length,
     overall_ability: estimateAbilityRasch(details.map(d => ({ difficulty: d.difficulty, is_correct: d.is_correct }))),
@@ -2216,12 +2463,12 @@ app.get('/api/analytics/student-ability', requireAdmin, (req, res) => {
 });
 
 app.get('/api/students/wrong-book', requireAdmin, (req, res) => {
-  const { student_name, student_id, grade_level } = req.query;
-  if (!student_name && !student_id) return res.status(400).json({ error: '請提供 student_name 或 student_id' });
-  const where = ['1=1'];
-  const params = [];
-  if (student_name) { where.push('s.student_name = ?'); params.push(student_name); }
-  if (student_id) { where.push('s.student_id = ?'); params.push(student_id); }
+  const { grade_level } = req.query;
+  const resolved = resolveStudentAccountForAnalytics(req.query || {});
+  if (!resolved.ok) return res.status(resolved.code).json({ error: resolved.error });
+  const account = resolved.account;
+  const where = ['s.status = \'submitted\'', 's.student_account_id = ?'];
+  const params = [account.id];
   if (grade_level) { where.push('q.grade_level = ?'); params.push(grade_level); }
   const rows = db.prepare(`
     SELECT q.id, q.content, q.answer, q.explanation, q.difficulty, q.grade_level, sub.name AS subject_name,
@@ -2278,31 +2525,37 @@ app.get('/api/export/exams/:id/stats.csv', requireAdmin, (req, res) => {
   res.send('\uFEFF' + toCsv(rows));
 });
 
-// GET personalized recommendations
-app.get('/api/recommendations', (req, res) => {
-  const { student_name, student_id, subject_id, count = 10, grade_level } = req.query;
+// GET personalized recommendations for current student
+app.get('/api/recommendations', requireStudent, requireStudentAccount, (req, res) => {
+  const { subject_id, count = 10, grade_level } = req.query;
   const n = Math.min(50, Math.max(1, parseInt(count) || 10));
+  const owner = resolveStudentSubmissionOwner(req);
+  if (!owner) return res.status(401).json({ error: '請先登入學生帳號' });
 
-  if (!student_name && !student_id) {
-    // No student context — return random questions
+  const buildRandomRecommendations = () => {
     const w = ['q.is_archived = 0']; const p = [];
     if (grade_level) { w.push('q.grade_level = ?'); p.push(grade_level); }
     if (subject_id)  { w.push('q.subject_id = ?');  p.push(subject_id); }
-    const qs = db.prepare(`SELECT q.*, s.name as subject_name FROM questions q JOIN subjects s ON s.id = q.subject_id WHERE ${w.join(' AND ')} ORDER BY RANDOM() LIMIT ?`).all(...p, n * 5);
-    const uniqueQs = dedupeQuestionsByContent(qs).slice(0, n);
-    return res.json({ recommendations: uniqueQs, context: { reason: '無歷史資料，隨機推薦' } });
-  }
+    const qs = db.prepare(`SELECT ${STUDENT_SAFE_QUESTION_SELECT} FROM questions q JOIN subjects s ON s.id = q.subject_id WHERE ${w.join(' AND ')} ORDER BY RANDOM() LIMIT ?`).all(...p, n * 5);
+    return dedupeQuestionsByContent(qs).slice(0, n);
+  };
 
-  const swhere = ['1=1']; const sparams = [];
-  if (student_name) { swhere.push('student_name = ?'); sparams.push(student_name); }
-  if (student_id)   { swhere.push('student_id = ?');   sparams.push(student_id); }
-  const subs = db.prepare(`SELECT id FROM submissions WHERE ${swhere.join(' AND ')}`).all(...sparams);
+  const subs = db.prepare(`
+    SELECT id
+    FROM submissions
+    WHERE status = 'submitted'
+      AND ${owner.whereSql}
+  `).all(...owner.params);
 
   if (!subs.length) {
-    const w = ['q.is_archived = 0']; const p = [];
-    if (grade_level) { w.push('q.grade_level = ?'); p.push(grade_level); }
-    const qs = db.prepare(`SELECT q.*, s.name as subject_name FROM questions q JOIN subjects s ON s.id = q.subject_id WHERE ${w.join(' AND ')} ORDER BY RANDOM() LIMIT ?`).all(...p, n * 5);
-    return res.json({ recommendations: dedupeQuestionsByContent(qs).slice(0, n), context: { reason: '無歷史資料，隨機推薦' } });
+    return res.json({
+      recommendations: buildRandomRecommendations(),
+      context: {
+        student_name: req.student?.name || '',
+        student_id: req.student?.student_id || '',
+        reason: '無歷史資料，隨機推薦'
+      }
+    });
   }
 
   const ids = subs.map(s => s.id);
@@ -2340,7 +2593,7 @@ app.get('/api/recommendations', (req, res) => {
   const excl = answeredIds.length > 0 ? `AND q.id NOT IN (${answeredIds.map(() => '?').join(',')})` : '';
   const excludeParams = answeredIds.length > 0 ? answeredIds : [];
 
-  let sql = `SELECT q.*, s.name as subject_name FROM questions q JOIN subjects s ON s.id = q.subject_id WHERE q.is_archived = 0 AND q.difficulty BETWEEN ? AND ? ${excl}`;
+  let sql = `SELECT ${STUDENT_SAFE_QUESTION_SELECT} FROM questions q JOIN subjects s ON s.id = q.subject_id WHERE q.is_archived = 0 AND q.difficulty BETWEEN ? AND ? ${excl}`;
   let params = [diffLow, diffHigh, ...excludeParams];
   if (targetSubjectId) { sql += ' AND q.subject_id = ?'; params.push(targetSubjectId); }
   if (grade_level)     { sql += ' AND q.grade_level = ?'; params.push(grade_level); }
@@ -2350,7 +2603,7 @@ app.get('/api/recommendations', (req, res) => {
 
   // Broaden if insufficient
   if (recs.length < n) {
-    let sql2 = `SELECT q.*, s.name as subject_name FROM questions q JOIN subjects s ON s.id = q.subject_id WHERE q.is_archived = 0 ${excl}`;
+    let sql2 = `SELECT ${STUDENT_SAFE_QUESTION_SELECT} FROM questions q JOIN subjects s ON s.id = q.subject_id WHERE q.is_archived = 0 ${excl}`;
     const p2 = [...excludeParams];
     if (targetSubjectId) { sql2 += ' AND q.subject_id = ?'; p2.push(targetSubjectId); }
     if (grade_level)     { sql2 += ' AND q.grade_level = ?'; p2.push(grade_level); }
@@ -2363,7 +2616,8 @@ app.get('/api/recommendations', (req, res) => {
   res.json({
     recommendations: recs,
     context: {
-      student_name: student_name || '',
+      student_name: req.student?.name || '',
+      student_id: req.student?.student_id || '',
       target_subject: tname,
       estimated_ability: Math.round(targetAbility * 10) / 10,
       target_difficulty: targetDiff,

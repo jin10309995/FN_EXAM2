@@ -158,8 +158,8 @@ async function loadResult() {
           <p class="text-gray-800 mb-3">${escHtml(d.content)}</p>
           <div class="text-sm space-y-1">
             <p>你的答案：${givenDisplay}</p>
-            ${(!d.is_correct && !isDontKnow && !isPending && !isGraded) ? `<p>正確答案：<span class="text-green-600 font-medium">${['choice','true_false'].includes(d.type) ? getOptionLabel(d, d.correct_answer) : escHtml(d.correct_answer)}</span></p>` : ''}
-            ${isDontKnow ? `<p>正確答案：<span class="text-green-600 font-medium">${['choice','true_false'].includes(d.type) ? getOptionLabel(d, d.correct_answer) : escHtml(d.correct_answer)}</span></p><p class="text-orange-500 text-xs mt-1">📌 此題已標記為需加強，出題時將優先複習</p>` : ''}
+            ${(!d.is_correct && !isDontKnow && !isPending && !isGraded) ? '<p>正確答案：<span class="text-gray-500 font-medium">（答案不公開）</span></p>' : ''}
+            ${isDontKnow ? '<p>正確答案：<span class="text-gray-500 font-medium">（答案不公開）</span></p><p class="text-orange-500 text-xs mt-1">📌 此題已標記為需加強，出題時將優先複習</p>' : ''}
             ${isPending ? '<p class="text-blue-500 text-xs mt-1">📋 此題為寫作/口說題，將由老師批改後更新分數</p>' : ''}
             ${isGraded ? `<div class="mt-2 bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-1">
               <p class="text-amber-800 font-medium text-xs">📝 老師批改結果</p>

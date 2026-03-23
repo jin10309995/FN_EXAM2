@@ -141,7 +141,7 @@ async function loadAnalysis() {
       <p class="text-gray-800 mb-2">${escHtml(q.content)}</p>
       <div class="text-sm space-y-1">
         ${givenHtml}
-        ${['choice','true_false'].includes(q.type) ? `<p>正確答案：<span class="text-green-600 font-medium">${getOptionLabel(q, q.correct_answer)}</span></p>` : `<p>正確答案：<span class="text-green-600 font-medium">${escHtml(q.correct_answer)}</span></p>`}
+        <p>正確答案：<span class="text-gray-500 font-medium">（答案不公開）</span></p>
         ${q.explanation ? `<p class="text-gray-500 mt-2 bg-gray-50 p-2 rounded">💡 ${escHtml(q.explanation)}</p>` : ''}
       </div>
     </div>

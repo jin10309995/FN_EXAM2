@@ -68,6 +68,8 @@ db.exec(`
     exam_id     INTEGER NOT NULL REFERENCES exams(id),
     student_name TEXT NOT NULL,
     student_id  TEXT,
+    student_account_id INTEGER,
+    student_session_id INTEGER,
     answers     TEXT NOT NULL,
     score       REAL,
     total_score REAL,
@@ -118,6 +120,7 @@ db.exec(`
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     student_name TEXT NOT NULL,
     student_id   TEXT,
+    student_account_id INTEGER,
     token_hash   TEXT NOT NULL UNIQUE,
     expires_at   TEXT NOT NULL,
     created_at   TEXT DEFAULT (datetime('now','localtime')),
@@ -295,6 +298,12 @@ if (!subjectCols.includes('grade_level')) {
 // Migration: add submission sharing / session columns
 {
   const subCols = db.prepare("PRAGMA table_info(submissions)").all().map(c => c.name);
+  if (!subCols.includes('student_account_id')) {
+    db.exec(`ALTER TABLE submissions ADD COLUMN student_account_id INTEGER`);
+  }
+  if (!subCols.includes('student_session_id')) {
+    db.exec(`ALTER TABLE submissions ADD COLUMN student_session_id INTEGER`);
+  }
   if (!subCols.includes('lookup_token')) {
     db.exec(`ALTER TABLE submissions ADD COLUMN lookup_token TEXT`);
   }
@@ -306,6 +315,289 @@ if (!subjectCols.includes('grade_level')) {
   }
   if (!subCols.includes('status')) {
     db.exec(`ALTER TABLE submissions ADD COLUMN status TEXT DEFAULT 'submitted'`);
+  }
+}
+
+// Migration: add student_account_id to student_sessions for account-bound ownership
+{
+  const ssCols = db.prepare("PRAGMA table_info(student_sessions)").all().map(c => c.name);
+  if (!ssCols.includes('student_account_id')) {
+    db.exec(`ALTER TABLE student_sessions ADD COLUMN student_account_id INTEGER`);
+  }
+}
+
+// Migration: backfill account-bound ownership for legacy sessions/submissions
+{
+  const backfillStudentOwner = db.transaction(() => {
+    // 1) Fill student_sessions.student_account_id by unique student_id.
+    db.exec(`
+      UPDATE student_sessions
+      SET student_account_id = (
+        SELECT st.id
+        FROM students st
+        WHERE st.student_id = student_sessions.student_id
+        LIMIT 1
+      )
+      WHERE student_account_id IS NULL
+        AND student_id IS NOT NULL
+        AND TRIM(student_id) <> ''
+        AND (
+          SELECT COUNT(*)
+          FROM students st2
+          WHERE st2.student_id = student_sessions.student_id
+        ) = 1
+    `);
+
+    // 2) Fill remaining sessions by unique student_name when student_id is empty.
+    db.exec(`
+      UPDATE student_sessions
+      SET student_account_id = (
+        SELECT st.id
+        FROM students st
+        WHERE st.student_name = student_sessions.student_name
+        LIMIT 1
+      )
+      WHERE student_account_id IS NULL
+        AND (student_id IS NULL OR TRIM(student_id) = '')
+        AND (
+          SELECT COUNT(*)
+          FROM students st2
+          WHERE st2.student_name = student_sessions.student_name
+        ) = 1
+    `);
+
+    // 3) Fill submissions from already-bound session ownership.
+    db.exec(`
+      UPDATE submissions
+      SET student_account_id = (
+        SELECT ss.student_account_id
+        FROM student_sessions ss
+        WHERE ss.id = submissions.student_session_id
+        LIMIT 1
+      )
+      WHERE student_account_id IS NULL
+        AND student_session_id IS NOT NULL
+    `);
+
+    // 4) Fill remaining submissions by unique student_id.
+    db.exec(`
+      UPDATE submissions
+      SET student_account_id = (
+        SELECT st.id
+        FROM students st
+        WHERE st.student_id = submissions.student_id
+        LIMIT 1
+      )
+      WHERE student_account_id IS NULL
+        AND student_id IS NOT NULL
+        AND TRIM(student_id) <> ''
+        AND (
+          SELECT COUNT(*)
+          FROM students st2
+          WHERE st2.student_id = submissions.student_id
+        ) = 1
+    `);
+
+    // 5) Fill remaining submissions by unique student_name when student_id is empty.
+    db.exec(`
+      UPDATE submissions
+      SET student_account_id = (
+        SELECT st.id
+        FROM students st
+        WHERE st.student_name = submissions.student_name
+        LIMIT 1
+      )
+      WHERE student_account_id IS NULL
+        AND (student_id IS NULL OR TRIM(student_id) = '')
+        AND (
+          SELECT COUNT(*)
+          FROM students st2
+          WHERE st2.student_name = submissions.student_name
+        ) = 1
+    `);
+
+    // 6) For account-owned submissions without session_id, attach latest account session.
+    db.exec(`
+      UPDATE submissions
+      SET student_session_id = (
+        SELECT ss.id
+        FROM student_sessions ss
+        WHERE ss.student_account_id = submissions.student_account_id
+        ORDER BY ss.id DESC
+        LIMIT 1
+      )
+      WHERE student_account_id IS NOT NULL
+        AND student_session_id IS NULL
+    `);
+  });
+  backfillStudentOwner();
+}
+
+// Migration: harden student ownership data integrity
+{
+  // 1) Enforce student_id uniqueness for non-empty IDs.
+  const duplicateStudentIds = db.prepare(`
+    SELECT student_id, COUNT(*) AS c
+    FROM students
+    WHERE student_id IS NOT NULL AND TRIM(student_id) <> ''
+    GROUP BY student_id
+    HAVING COUNT(*) > 1
+  `).all();
+  if (duplicateStudentIds.length === 0) {
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_students_student_id_unique_nonempty
+      ON students(student_id)
+      WHERE student_id IS NOT NULL AND TRIM(student_id) <> ''
+    `);
+  } else {
+    console.warn(`[Migration] skip idx_students_student_id_unique_nonempty: found ${duplicateStudentIds.length} duplicate student_id groups`);
+  }
+
+  // 2) Remove invalid student_sessions that cannot map to a valid student account.
+  db.exec(`
+    DELETE FROM student_sessions
+    WHERE student_account_id IS NULL
+       OR student_account_id NOT IN (SELECT id FROM students)
+  `);
+
+  // 3) Rebuild student_sessions to enforce NOT NULL + FK on student_account_id.
+  {
+    const ssCols = db.prepare(`PRAGMA table_info(student_sessions)`).all();
+    const ssAccountCol = ssCols.find(c => c.name === 'student_account_id');
+    const ssFks = db.prepare(`PRAGMA foreign_key_list(student_sessions)`).all();
+    const ssHasAccountFk = ssFks.some(f => f.from === 'student_account_id' && f.table === 'students');
+    const ssNeedsRebuild = !ssAccountCol || ssAccountCol.notnull !== 1 || !ssHasAccountFk;
+    if (ssNeedsRebuild) {
+      db.exec(`PRAGMA foreign_keys = OFF`);
+      db.exec(`PRAGMA legacy_alter_table = ON`);
+      const rebuildStudentSessions = db.transaction(() => {
+        db.exec(`ALTER TABLE student_sessions RENAME TO student_sessions_old`);
+        db.exec(`
+          CREATE TABLE student_sessions (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_name       TEXT NOT NULL,
+            student_id         TEXT,
+            student_account_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+            token_hash         TEXT NOT NULL UNIQUE,
+            expires_at         TEXT NOT NULL,
+            created_at         TEXT DEFAULT (datetime('now','localtime')),
+            last_seen_at       TEXT DEFAULT (datetime('now','localtime'))
+          )
+        `);
+        db.exec(`
+          INSERT INTO student_sessions
+            (id, student_name, student_id, student_account_id, token_hash, expires_at, created_at, last_seen_at)
+          SELECT id, student_name, student_id, student_account_id, token_hash, expires_at, created_at, last_seen_at
+          FROM student_sessions_old
+        `);
+        db.exec(`DROP TABLE student_sessions_old`);
+      });
+      rebuildStudentSessions();
+      db.exec(`PRAGMA legacy_alter_table = OFF`);
+      db.exec(`PRAGMA foreign_keys = ON`);
+    }
+  }
+
+  // 4) Normalize submissions data before strict constraints.
+  db.exec(`
+    UPDATE submissions
+    SET status = 'submitted'
+    WHERE status IS NULL OR TRIM(status) = '' OR status NOT IN ('in_progress','submitted')
+  `);
+  db.exec(`
+    UPDATE submissions
+    SET student_account_id = (
+      SELECT ss.student_account_id
+      FROM student_sessions ss
+      WHERE ss.id = submissions.student_session_id
+      LIMIT 1
+    )
+    WHERE student_account_id IS NULL
+      AND student_session_id IS NOT NULL
+  `);
+  db.exec(`
+    UPDATE submissions
+    SET student_session_id = NULL
+    WHERE student_session_id IS NOT NULL
+      AND student_session_id NOT IN (SELECT id FROM student_sessions)
+  `);
+  db.exec(`
+    UPDATE submissions
+    SET student_session_id = (
+      SELECT ss.id
+      FROM student_sessions ss
+      WHERE ss.student_account_id = submissions.student_account_id
+      ORDER BY ss.id DESC
+      LIMIT 1
+    )
+    WHERE student_account_id IS NOT NULL
+      AND student_session_id IS NULL
+  `);
+
+  // 5) Rebuild submissions with stronger constraints when data is clean.
+  {
+    const invalidSubmissionOwnerCount = db.prepare(`
+      SELECT COUNT(*) AS c
+      FROM submissions s
+      LEFT JOIN students st ON st.id = s.student_account_id
+      WHERE s.student_account_id IS NULL OR st.id IS NULL
+    `).get().c;
+
+    const subSchema = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='submissions'`).get();
+    const subSql = String(subSchema?.sql || '');
+    const subCols = db.prepare(`PRAGMA table_info(submissions)`).all();
+    const subStatusCol = subCols.find(c => c.name === 'status');
+    const subAccountCol = subCols.find(c => c.name === 'student_account_id');
+    const subFks = db.prepare(`PRAGMA foreign_key_list(submissions)`).all();
+    const subHasAccountFk = subFks.some(f => f.from === 'student_account_id' && f.table === 'students');
+    const subHasSessionFk = subFks.some(f => f.from === 'student_session_id' && f.table === 'student_sessions');
+    const subHasStatusCheck = /CHECK\s*\(\s*status\s+IN\s*\('in_progress','submitted'\)\s*\)/i.test(subSql);
+    const subNeedsRebuild =
+      !subStatusCol || subStatusCol.notnull !== 1 ||
+      !subAccountCol || subAccountCol.notnull !== 1 ||
+      !subHasAccountFk || !subHasSessionFk || !subHasStatusCheck;
+
+    if (subNeedsRebuild) {
+      if (invalidSubmissionOwnerCount > 0) {
+        console.warn(`[Migration] skip submissions integrity hardening: found ${invalidSubmissionOwnerCount} rows without valid student_account_id`);
+      } else {
+        db.exec(`PRAGMA foreign_keys = OFF`);
+        db.exec(`PRAGMA legacy_alter_table = ON`);
+        const rebuildSubmissions = db.transaction(() => {
+          db.exec(`ALTER TABLE submissions RENAME TO submissions_old`);
+          db.exec(`
+            CREATE TABLE submissions (
+              id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+              exam_id            INTEGER NOT NULL REFERENCES exams(id),
+              student_name       TEXT NOT NULL,
+              student_id         TEXT,
+              answers            TEXT NOT NULL,
+              score              REAL,
+              total_score        REAL,
+              submitted_at       TEXT DEFAULT (datetime('now','localtime')),
+              lookup_token       TEXT,
+              started_at         TEXT,
+              last_seen_at       TEXT,
+              status             TEXT NOT NULL DEFAULT 'submitted' CHECK(status IN ('in_progress','submitted')),
+              student_account_id INTEGER NOT NULL REFERENCES students(id),
+              student_session_id INTEGER REFERENCES student_sessions(id) ON DELETE SET NULL
+            )
+          `);
+          db.exec(`
+            INSERT INTO submissions
+              (id, exam_id, student_name, student_id, answers, score, total_score, submitted_at, lookup_token, started_at, last_seen_at, status, student_account_id, student_session_id)
+            SELECT id, exam_id, student_name, student_id, answers, score, total_score, submitted_at, lookup_token, started_at, last_seen_at,
+                   COALESCE(NULLIF(TRIM(status), ''), 'submitted'),
+                   student_account_id, student_session_id
+            FROM submissions_old
+          `);
+          db.exec(`DROP TABLE submissions_old`);
+        });
+        rebuildSubmissions();
+        db.exec(`PRAGMA legacy_alter_table = OFF`);
+        db.exec(`PRAGMA foreign_keys = ON`);
+      }
+    }
   }
 }
 
@@ -432,19 +724,36 @@ db.exec(`
   ON exams(status, starts_at, ends_at);
   CREATE INDEX IF NOT EXISTS idx_submissions_exam_student
   ON submissions(exam_id, student_name, student_id);
+  CREATE INDEX IF NOT EXISTS idx_submissions_exam_owner
+  ON submissions(exam_id, student_account_id, student_session_id, status);
   CREATE UNIQUE INDEX IF NOT EXISTS idx_submissions_lookup_token
   ON submissions(lookup_token);
   CREATE INDEX IF NOT EXISTS idx_admin_sessions_token_exp
   ON admin_sessions(token_hash, expires_at);
   CREATE INDEX IF NOT EXISTS idx_student_sessions_token_exp
   ON student_sessions(token_hash, expires_at);
+  CREATE INDEX IF NOT EXISTS idx_student_sessions_account
+  ON student_sessions(student_account_id, expires_at);
   CREATE INDEX IF NOT EXISTS idx_question_versions_question
   ON question_versions(question_id, version_no DESC);
 `);
 
+const PASSWORD_HASH_SCHEME = 'scrypt-v1';
+const SCRYPT_N = 16384;
+const SCRYPT_R = 8;
+const SCRYPT_P = 1;
+const SCRYPT_KEYLEN = 64;
+const SCRYPT_MAXMEM = 64 * 1024 * 1024;
+
 function hashPassword(password) {
-  const text = String(password || '');
-  return crypto.createHash('sha256').update(text).digest('hex');
+  const salt = crypto.randomBytes(16);
+  const derived = crypto.scryptSync(String(password || ''), salt, SCRYPT_KEYLEN, {
+    N: SCRYPT_N,
+    r: SCRYPT_R,
+    p: SCRYPT_P,
+    maxmem: SCRYPT_MAXMEM
+  });
+  return `${PASSWORD_HASH_SCHEME}$${SCRYPT_N}$${SCRYPT_R}$${SCRYPT_P}$${salt.toString('base64')}$${derived.toString('base64')}`;
 }
 
 {

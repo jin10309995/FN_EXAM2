@@ -154,7 +154,8 @@ async function ensureStudentSession() {
 }
 
 async function loadExam() {
-  const res = await fetch(`/api/public/exams/${examId}/take`);
+  const query = accessCode ? `?access_code=${encodeURIComponent(accessCode)}` : '';
+  const res = await fetch(`/api/public/exams/${examId}/take${query}`);
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     const msg = data.error || '試卷不存在或尚未開放';
@@ -186,6 +187,15 @@ async function startExam() {
     alert(data.error || '無法開始考試');
     return;
   }
+  const takeRes = await fetch(`/api/public/exams/${examId}/take?access_code=${encodeURIComponent(accessCode || '')}`);
+  const takeData = await takeRes.json().catch(() => ({}));
+  if (!takeRes.ok) {
+    alert(takeData.error || '無法載入試卷內容');
+    return;
+  }
+  examData = takeData;
+  document.getElementById('exam-title').textContent = examData.title;
+  timeLeft = examData.duration_min * 60;
   currentSubmissionId = data.submission_id;
   currentLookupToken = data.lookup_token;
   examStartedAt = data.started_at || new Date().toISOString();
@@ -435,9 +445,13 @@ function renderFill(q, idx) {
     class="w-full border-2 border-gray-300 focus:border-indigo-500 rounded-lg px-3 py-2 outline-none transition-colors">` + renderDontKnow(idx);
 }
 
+function getClozeBlankCount(q) {
+  const n = parseInt(q?.blank_count, 10);
+  return Number.isInteger(n) && n > 0 ? n : 1;
+}
+
 function renderCloze(q, idx) {
-  // Split answer by | to count blanks, render matching number of inputs
-  const blanks = (q.answer || '').split('|').length;
+  const blanks = getClozeBlankCount(q);
   const inputs = Array.from({length: blanks}, (_, b) =>
     `<div class="flex items-center gap-2 mb-2">
       <span class="text-sm text-gray-500 min-w-12">空格 ${b+1}：</span>
@@ -451,7 +465,7 @@ function renderCloze(q, idx) {
 
 function setClozeAnswer(idx) {
   const q = examData.questions[idx];
-  const blanks = (q.answer || '').split('|').length;
+  const blanks = getClozeBlankCount(q);
   const parts = Array.from({length: blanks}, (_, b) => {
     const el = document.getElementById(`cloze-${idx}-${b}`);
     return el ? el.value.trim() : '';
@@ -512,7 +526,7 @@ function toggleDontKnow(idx) {
     if (q.type === 'choice' || q.type === 'reading' || q.type === 'true_false') {
       document.querySelectorAll(`input[name="q-${idx}"]`).forEach(r => r.checked = false);
     } else if (q.type === 'cloze') {
-      const blanks = (q.answer || '').split('|').length;
+      const blanks = getClozeBlankCount(q);
       for (let b = 0; b < blanks; b++) {
         const el = document.getElementById(`cloze-${idx}-${b}`);
         if (el) el.value = '';
@@ -555,17 +569,27 @@ async function startRecording(idx) {
     mr.onstop = async () => {
       stream.getTracks().forEach(t => t.stop());
       const blob = new Blob(chunks, { type: 'audio/webm' });
+      const statusEl = document.getElementById(`rec-status-${idx}`);
+      if (!currentSubmissionId || !currentLookupToken) {
+        statusEl.textContent = '上傳失敗：作答 session 無效，請重新進入試卷';
+        return;
+      }
       const fd = new FormData();
       fd.append('audio', blob, `speaking_${idx}.webm`);
-      document.getElementById(`rec-status-${idx}`).textContent = '上傳中…';
+      fd.append('submission_id', String(currentSubmissionId));
+      fd.append('lookup_token', String(currentLookupToken));
+      statusEl.textContent = '上傳中…';
       try {
-        const r = await fetch('/api/public/audio/upload', { method: 'POST', body: fd });
-        const j = await r.json();
-        if (j.audio_url) {
+        const r = await fetch('/api/public/audio/upload', { method: 'POST', credentials: 'same-origin', body: fd });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok && j.audio_url) {
           setAnswer(idx, '__speaking_audio__:' + j.audio_url);
-          document.getElementById(`rec-status-${idx}`).innerHTML = `✅ 錄音上傳成功：<a href="${j.audio_url}" target="_blank" class="text-blue-500 underline">聆聽</a>`;
-        } else { document.getElementById(`rec-status-${idx}`).textContent = '上傳失敗：' + (j.error||'未知'); }
-      } catch(e) { document.getElementById(`rec-status-${idx}`).textContent = '上傳失敗：' + e.message; }
+          statusEl.innerHTML = `✅ 錄音上傳成功：<a href="${j.audio_url}" target="_blank" class="text-blue-500 underline">聆聽</a>`;
+        } else {
+          statusEl.textContent = '上傳失敗：' + (j.error || `HTTP ${r.status}`);
+          if (r.status === 401) setTimeout(redirectToStudentLogin, 500);
+        }
+      } catch(e) { statusEl.textContent = '上傳失敗：' + e.message; }
     };
     recorders[idx] = mr;
     mr.start();
