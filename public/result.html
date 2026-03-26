@@ -48,6 +48,11 @@ const token = params.get('token');
 const RECENT_LOOKUP_KEY = 'recent_lookup_records_v1';
 const RECENT_LOOKUP_LIMIT = 20;
 
+function formatShortCode(code) {
+  if (!code || code.length < 8) return code || '—';
+  return code.substring(0, 4) + '-' + code.substring(4);
+}
+
 function redirectToStudentLogin() {
   location.replace(studentLoginUrl);
 }
@@ -136,6 +141,11 @@ async function loadResult() {
       <h2 class="text-2xl font-bold text-gray-800 mb-2">${escHtml(data.student_name)} 的成績</h2>
       <div class="text-7xl font-bold ${color} my-6">${pct}%</div>
       <p class="text-gray-500">${data.score} / ${data.total_score} 分 &nbsp;·&nbsp; 作答時間: ${data.submitted_at}</p>
+      ${data.short_code ? `
+      <div class="mt-4 inline-block bg-indigo-50 border border-indigo-200 rounded-xl px-6 py-3">
+        <p class="text-xs text-gray-500 mb-1">📋 查詢碼（請記下，下次可用來查詢成績）</p>
+        <p class="text-2xl font-mono font-bold text-indigo-600 tracking-widest">${escHtml(formatShortCode(data.short_code))}</p>
+      </div>` : ''}
     </div>
     <div class="space-y-4">
       ${data.details.map((d,i) => {
@@ -172,9 +182,10 @@ async function loadResult() {
       }).join('')}
     </div>
     <div class="mt-6 text-center flex gap-4 justify-center">
-      <a href="/exam-list.html" class="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3 rounded-lg font-medium transition-colors">返回考試列表</a>
+      <a href="/result.html?id=${id}&token=${encodeURIComponent(token)}" class="bg-gray-600 hover:bg-gray-700 text-white px-8 py-3 rounded-lg font-medium transition-colors">返回考試列表</a>
       <a href="/analysis.html?id=${id}&token=${encodeURIComponent(token)}" class="bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-3 rounded-lg font-medium transition-colors">📊 查看答題分析報告</a>
       <a href="/results.html?token=${encodeURIComponent(token)}" class="bg-gray-600 hover:bg-gray-700 text-white px-8 py-3 rounded-lg font-medium transition-colors">查詢碼頁面</a>
+      <a href="/api/submissions/${id}/report.pdf?token=${encodeURIComponent(token)}" target="_blank" class="bg-rose-600 hover:bg-rose-700 text-white px-8 py-3 rounded-lg font-medium transition-colors">⬇️ 下載成績報告 (PDF)</a>
     </div>
   `;
   if (window.MathJax) MathJax.typesetPromise([document.getElementById('result-container')]);
@@ -196,9 +207,11 @@ async function initPage() {
 }
 
 initPage();
+
 </script>
 </body>
 </html>
+
 
 
 

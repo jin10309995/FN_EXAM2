@@ -246,6 +246,32 @@ body {
 .login-btn:hover { background: #1d43bb; }
 .login-btn:active { transform: translateY(1px); }
 
+.preset-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.preset-btn {
+  flex: 1;
+  height: 46px;
+  border: 1.5px solid #a9b8d6;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #1f2937;
+  font-size: 17px;
+  font-weight: 700;
+  font-family: 'M PLUS Rounded 1c', 'Noto Sans TC', sans-serif;
+  cursor: pointer;
+  transition: background-color .15s ease, border-color .15s ease;
+}
+.preset-btn:hover {
+  background: #eef2ff;
+  border-color: #818cf8;
+}
+.preset-btn:active {
+  background: #e0e7ff;
+}
+
 .footer-note {
   margin: 18px 0 0;
   text-align: center;
@@ -295,8 +321,13 @@ body {
       <p class="brand-subtitle">數理資優班考題系統</p>
     </header>
 
-    <section class="login-card" aria-label="登入表單">
+    <section class="login-card" aria-label="登入表單" style="position:relative">
       <p id="role-hint" class="role-hint">登入成功後，系統會自動判斷你是老師或學生。</p>
+
+      <div class="preset-row">
+        <button type="button" id="preset-teacher" class="preset-btn">👨‍🏫 老師帳號</button>
+        <button type="button" id="preset-student" class="preset-btn">🎒 學生帳號</button>
+      </div>
 
       <div class="form-row">
         <label for="username">帳號</label>
@@ -324,6 +355,7 @@ body {
 <script>
 const params = new URLSearchParams(location.search);
 const role = params.get('role') || '';
+const preset = params.get('preset') || '';
 const returnTo = params.get('return_to') || '';
 const BRUSH_GOLD_LOGO = `<svg class="brand-emblem" viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg">
   <defs>
@@ -363,12 +395,51 @@ function renderBrushLogo() {
   host.innerHTML = BRUSH_GOLD_LOGO;
 }
 
+const LOGIN_PRESETS = {
+  teacher: { username: 'admin', password: 'admin1234' },
+  student: { username: 'student', password: 'student1234' }
+};
+
+function fillPreset(type) {
+  const account = LOGIN_PRESETS[type];
+  if (!account) return;
+  const uEl = document.getElementById('username');
+  const pEl = document.getElementById('password');
+  uEl.value = account.username;
+  uEl.dispatchEvent(new Event('input', { bubbles: true }));
+  uEl.dispatchEvent(new Event('change', { bubbles: true }));
+  pEl.value = account.password;
+  pEl.dispatchEvent(new Event('input', { bubbles: true }));
+  pEl.dispatchEvent(new Event('change', { bubbles: true }));
+  pEl.focus();
+}
+
+function applyLoginPreset() {
+  const account = LOGIN_PRESETS[preset];
+  if (!account) return;
+  const uEl = document.getElementById('username');
+  const pEl = document.getElementById('password');
+  if (uEl && !uEl.value) {
+    uEl.value = account.username;
+    uEl.dispatchEvent(new Event('input', { bubbles: true }));
+    uEl.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  if (pEl && !pEl.value) {
+    pEl.value = account.password;
+    pEl.dispatchEvent(new Event('input', { bubbles: true }));
+    pEl.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+}
+
 if (role === 'student') {
   document.getElementById('role-hint').textContent = '登入學生帳號後，會自動進入選擇考題。';
 } else if (role === 'teacher') {
   document.getElementById('role-hint').textContent = '登入老師帳號後，會自動進入老師首頁。';
 }
 renderBrushLogo();
+applyLoginPreset();
+document.getElementById('preset-teacher').addEventListener('click', function() { fillPreset('teacher'); });
+document.getElementById('preset-student').addEventListener('click', function() { fillPreset('student'); });
 
 function toSafeRedirectPath(rawUrl) {
   if (!rawUrl) return '';
@@ -430,6 +501,8 @@ async function login() {
 
   redirectAfterLogin(data.redirect_to || '/', data.role || role);
 }
+
 </script>
 </body>
 </html>
+

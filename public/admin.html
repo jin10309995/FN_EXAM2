@@ -325,6 +325,7 @@ body{font-family:'Noto Sans TC',sans-serif;}
         <label class="block text-xs text-gray-500 mb-1">題型篩選</label>
         <select id="grading-type-filter" onchange="loadPendingGrading()" class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
           <option value="writing">✍️ 寫作</option>
+          <option value="speaking">🎤 口說</option>
         </select>
       </div>
       <div class="flex gap-2">
@@ -2222,6 +2223,8 @@ async function loadExams() {
       <div class="flex gap-2">
         <a href="/results.html?exam_id=${e.id}" class="text-xs bg-purple-50 text-purple-600 hover:bg-purple-100 px-3 py-1.5 rounded transition-colors">成績</a>
         <button onclick="editExam(${e.id})" class="text-xs bg-blue-50 text-blue-600 hover:bg-blue-100 px-3 py-1.5 rounded transition-colors">編輯</button>
+        <button onclick="cloneExam(${e.id})" class="text-xs bg-green-50 text-green-600 hover:bg-green-100 px-3 py-1.5 rounded transition-colors">複製</button>
+        <button onclick="batchAiGrade(${e.id})" class="text-xs bg-yellow-50 text-yellow-600 hover:bg-yellow-100 px-3 py-1.5 rounded transition-colors">AI批改</button>
         <button onclick="deleteExam(${e.id})" class="text-xs bg-red-50 text-red-600 hover:bg-red-100 px-3 py-1.5 rounded transition-colors">刪除</button>
       </div>
     </div>
@@ -2259,6 +2262,37 @@ async function deleteExam(id) {
   if (!confirm('確定刪除此試卷？')) return;
   await fetch('/api/exams/' + id, { method: 'DELETE' });
   loadExams();
+}
+
+async function cloneExam(id) {
+  if (!confirm('確定要複製此試卷？將建立一份草稿副本。')) return;
+  const res = await adminFetch(`/api/exams/${id}/clone`, { method: 'POST' });
+  const data = await res.json();
+  if (data.id) {
+    alert(`試卷已複製！新試卷 ID：${data.id}（${data.title}）`);
+    loadExams();
+  } else {
+    alert('複製失敗：' + (data.error || '未知錯誤'));
+  }
+}
+
+async function batchAiGrade(id) {
+  if (!confirm('確定要對此試卷所有寫作 / 口說題進行 AI 批改？') ) return;
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = '批改中…';
+  try {
+    const res = await adminFetch(`/api/exams/${id}/batch-ai-grade`, { method: 'POST' });
+    const data = await res.json();
+    if (data.graded != null) {
+      alert(`AI 批改完成！共批改 ${data.graded} 筆答案。`);
+    } else {
+      alert('批改失敗：' + (data.error || '未知錯誤'));
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'AI批改';
+  }
 }
 
 async function loadExamQuestions() {

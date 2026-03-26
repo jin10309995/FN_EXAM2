@@ -316,6 +316,10 @@ if (!subjectCols.includes('grade_level')) {
   if (!subCols.includes('status')) {
     db.exec(`ALTER TABLE submissions ADD COLUMN status TEXT DEFAULT 'submitted'`);
   }
+  if (!subCols.includes('short_code')) {
+    db.exec(`ALTER TABLE submissions ADD COLUMN short_code TEXT`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_submissions_short_code ON submissions(short_code)`);
+  }
 }
 
 // Migration: add student_account_id to student_sessions for account-bound ownership
@@ -702,6 +706,69 @@ if (!subjectCols.includes('grade_level')) {
   }
 }
 
+// Migration: add ON DELETE CASCADE to submissions.exam_id if missing
+{
+  const subFks = db.prepare(`PRAGMA foreign_key_list(submissions)`).all();
+  const examFk = subFks.find(f => f.from === 'exam_id' && f.table === 'exams');
+  if (!examFk || examFk.on_delete !== 'CASCADE') {
+    db.exec(`PRAGMA foreign_keys = OFF`);
+    db.exec(`PRAGMA legacy_alter_table = ON`);
+    const rebuildSubmissionsExamCascade = db.transaction(() => {
+      db.exec(`ALTER TABLE submissions RENAME TO submissions_old`);
+      db.exec(`
+        CREATE TABLE submissions (
+          id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+          exam_id            INTEGER NOT NULL REFERENCES exams(id) ON DELETE CASCADE,
+          student_name       TEXT NOT NULL,
+          student_id         TEXT,
+          answers            TEXT NOT NULL,
+          score              REAL,
+          total_score        REAL,
+          submitted_at       TEXT DEFAULT (datetime('now','localtime')),
+          lookup_token       TEXT,
+          started_at         TEXT,
+          last_seen_at       TEXT,
+          status             TEXT NOT NULL DEFAULT 'submitted' CHECK(status IN ('in_progress','submitted')),
+          student_account_id INTEGER NOT NULL REFERENCES students(id),
+          student_session_id INTEGER REFERENCES student_sessions(id) ON DELETE SET NULL
+        )
+      `);
+      db.exec(`
+        INSERT INTO submissions
+          (id, exam_id, student_name, student_id, answers, score, total_score,
+           submitted_at, lookup_token, started_at, last_seen_at, status,
+           student_account_id, student_session_id)
+        SELECT id, exam_id, student_name, student_id, answers, score, total_score,
+               submitted_at, lookup_token, started_at, last_seen_at, status,
+               student_account_id, student_session_id
+        FROM submissions_old
+      `);
+      db.exec(`DROP TABLE submissions_old`);
+    });
+    rebuildSubmissionsExamCascade();
+    db.exec(`PRAGMA legacy_alter_table = OFF`);
+    db.exec(`PRAGMA foreign_keys = ON`);
+  }
+}
+
+// Migration: add tolerance column to questions (for calculation-type numeric grading)
+{
+  const cols = db.prepare('PRAGMA table_info(questions)').all().map(c => c.name);
+  if (!cols.includes('tolerance')) {
+    db.exec('ALTER TABLE questions ADD COLUMN tolerance REAL');
+  }
+}
+
+// Migration: add randomize_questions and randomize_options to exams
+{
+  const cols = db.prepare('PRAGMA table_info(exams)').all().map(c => c.name);
+  if (!cols.includes('randomize_questions')) {
+    db.exec('ALTER TABLE exams ADD COLUMN randomize_questions INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!cols.includes('randomize_options')) {
+    db.exec('ALTER TABLE exams ADD COLUMN randomize_options INTEGER NOT NULL DEFAULT 0');
+  }
+}
 
 // Migration: add UNIQUE INDEX on questions(content) to prevent duplicate questions
 {
@@ -714,6 +781,12 @@ if (!subjectCols.includes('grade_level')) {
 }
 
 db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_answer_details_submission
+  ON answer_details(submission_id);
+  CREATE INDEX IF NOT EXISTS idx_answer_details_question
+  ON answer_details(question_id);
+  CREATE INDEX IF NOT EXISTS idx_exam_questions_exam
+  ON exam_questions(exam_id);
   CREATE INDEX IF NOT EXISTS idx_questions_grade_subject_archived
   ON questions(grade_level, subject_id, is_archived);
   CREATE INDEX IF NOT EXISTS idx_questions_content_hash

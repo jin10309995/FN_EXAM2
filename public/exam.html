@@ -21,6 +21,9 @@ body{font-family:'Noto Sans TC',sans-serif;}
 }
 .tab-btn{transition:all .2s;}
 .tab-btn.active{background:#4338ca;color:#fff;}
+
+/* Bookmark dot on nav buttons */
+.nav-bookmark-dot{position:absolute;top:-3px;right:-3px;width:7px;height:7px;background:#f59e0b;border-radius:50%;border:1.5px solid white;pointer-events:none;}
 </style>
 </head>
 <body class="bg-gray-100 min-h-screen">
@@ -95,6 +98,8 @@ let currentLookupToken = '';
 let examStartedAt = null;
 let autoSaveTimer = null;
 let saveInFlight = false;
+let bookmarks = {};
+let showOnlyBookmarks = false;
 const RECENT_LOOKUP_KEY = 'recent_lookup_records_v1';
 const RECENT_LOOKUP_LIMIT = 20;
 const studentLoginUrl = '/login.html?role=student&return_to=' + encodeURIComponent(location.pathname + location.search);
@@ -249,7 +254,10 @@ function renderCurrentQuestion(idx) {
   container.innerHTML = `${passageBlock}<div id="q-${idx}" class="bg-white rounded-xl shadow p-6">
     <div class="flex justify-between items-start mb-3">
       <span class="text-sm font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">第 ${idx+1} 題 · ${q.subject_name} · ${q.score}分${typeTag}</span>
-      <span class="text-xs text-gray-400">${'★'.repeat(q.difficulty || 1)}${'☆'.repeat(5-(q.difficulty||1))}</span>
+      <div class="flex items-center gap-2">
+        <button onclick="toggleBookmark(${idx})" title="${bookmarks[q.id] ? '移除書籤' : '加入書籤'}" style="font-size:1.25rem;line-height:1;background:none;border:none;cursor:pointer;padding:2px;opacity:${bookmarks[q.id] ? '1' : '0.25'};transition:opacity .15s">🔖</button>
+        <span class="text-xs text-gray-400">${'★'.repeat(q.difficulty || 1)}${'☆'.repeat(5-(q.difficulty||1))}</span>
+      </div>
     </div>
     ${q.audio_transcript ? renderTTSPlayer(q, idx) : ''}
     ${imageBlock}
@@ -295,6 +303,8 @@ function updateNavBar() {
 
   const navBtns = examData.questions.map((q, i) => {
     const qid = q.id;
+    const isBookmarkedQ = !!bookmarks[qid];
+    if (showOnlyBookmarks && !isBookmarkedQ) return '';
     let cls = 'w-8 h-8 rounded text-xs font-medium border-2 ';
     if (i === currentQuestionIndex) {
       cls += 'border-indigo-600 bg-indigo-600 text-white';
@@ -305,11 +315,18 @@ function updateNavBar() {
     } else {
       cls += 'border-gray-300 text-gray-600 hover:border-indigo-400';
     }
-    return `<button id="nav-${i}" onclick="goToQuestion(${i})" class="${cls}">${i+1}</button>`;
+    const dot = isBookmarkedQ ? `<span class="nav-bookmark-dot"></span>` : '';
+    return `<button id="nav-${i}" onclick="goToQuestion(${i})" class="${cls}" style="position:relative">${i+1}${dot}</button>`;
   }).join('');
+
+  const bookmarkCount = examData.questions.filter(q => bookmarks[q.id]).length;
+  const filterBtn = bookmarkCount > 0
+    ? `<button onclick="toggleBookmarkFilter()" class="text-xs px-3 py-1.5 rounded-lg border transition-colors ${showOnlyBookmarks ? 'bg-yellow-400 border-yellow-500 text-white' : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'}">🔖 ${showOnlyBookmarks ? '顯示全部' : '顯示書籤'} (${bookmarkCount})</button>`
+    : '';
 
   nav.innerHTML = `
     <div class="flex gap-1 flex-wrap justify-center">${navBtns}</div>
+    ${filterBtn ? `<div class="flex justify-center">${filterBtn}</div>` : ''}
     <div class="flex items-center justify-between w-full max-w-sm gap-4">
       <button onclick="goToQuestion(${currentQuestionIndex - 1})" ${isFirst ? 'disabled' : ''}
         class="flex-1 px-5 py-2 rounded-lg border-2 border-gray-300 text-gray-700 text-base font-semibold ${isFirst ? 'opacity-30 cursor-not-allowed' : 'hover:border-indigo-400 hover:text-indigo-600'}">
@@ -685,13 +702,26 @@ async function submitAnswers() {
   if (autoSaveTimer) clearInterval(autoSaveTimer);
   const saved = await saveProgress(true);
   if (!saved) return;
+
+  // Reverse-map shuffled option letters back to original letters before submitting
+  const submittedAnswers = {};
+  for (const q of (examData?.questions || [])) {
+    const given = answers[q.id];
+    if (given == null) continue;
+    if (q._option_remap && typeof given === 'string' && given.length === 1 && given >= 'A' && given <= 'D') {
+      submittedAnswers[q.id] = q._option_remap[given] || given;
+    } else {
+      submittedAnswers[q.id] = given;
+    }
+  }
+
   const res = await fetch(`/api/exams/${examId}/submit`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       student_name: studentName,
       student_id: studentId,
-      answers,
+      answers: submittedAnswers,
       access_code: accessCode,
       submission_id: currentSubmissionId,
       lookup_token: currentLookupToken
@@ -714,6 +744,30 @@ async function submitAnswers() {
 }
 
 function escHtml(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+// ── Bookmarks ─────────────────────────────────────────────────────────────
+function loadBookmarks() {
+  try { bookmarks = JSON.parse(localStorage.getItem(`exam_bookmarks_${examId}`) || '{}'); }
+  catch(_) { bookmarks = {}; }
+}
+function saveBookmarks() {
+  try { localStorage.setItem(`exam_bookmarks_${examId}`, JSON.stringify(bookmarks)); }
+  catch(_) {}
+}
+function toggleBookmark(idx) {
+  if (!examData) return;
+  const qid = examData.questions[idx].id;
+  if (bookmarks[qid]) { delete bookmarks[qid]; } else { bookmarks[qid] = true; }
+  saveBookmarks();
+  renderCurrentQuestion(idx);
+}
+function toggleBookmarkFilter() {
+  showOnlyBookmarks = !showOnlyBookmarks;
+  updateNavBar();
+}
+
+loadBookmarks();
+initPage();
 window.addEventListener('beforeunload', () => {
   if (currentSubmissionId && currentLookupToken && Object.keys(answers).length) {
     navigator.sendBeacon?.(
@@ -736,11 +790,10 @@ async function initPage() {
   if (student.student_id && idInput && !idInput.value.trim()) idInput.value = student.student_id;
   loadExam();
 }
-
-initPage();
 </script>
 </body>
 </html>
+
 
 
 

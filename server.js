@@ -5,7 +5,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const helmet = require('helmet');
 const cors = require('cors');
-const rateLimit = require('express-rate-limit');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const multer = require('multer');
 const db = require('./database');
 const { generateQuestions, gradeEssay, generateModelEssay } = require('./llm');
@@ -61,7 +61,32 @@ const uploadImage = multer({
 });
 
 // ─── Security Middleware ──────────────────────────────────────────────────────
-app.use(helmet({ contentSecurityPolicy: false })); // 安全 HTTP Headers
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: [
+        "'self'",
+        "'unsafe-inline'",           // 前端內嵌 <script> 必要
+        'https://cdn.tailwindcss.com',
+        'https://cdn.jsdelivr.net'
+      ],
+      scriptSrcAttr: ["'unsafe-inline'"], // 允許 onclick 等 HTML 事件屬性
+      styleSrc: [
+        "'self'",
+        "'unsafe-inline'",           // Tailwind 內嵌 style 必要
+        'https://cdn.tailwindcss.com',
+        'https://fonts.googleapis.com'
+      ],
+      fontSrc:  ["'self'", 'https://fonts.gstatic.com', 'data:'],
+      imgSrc:   ["'self'", 'data:', 'https:', 'blob:'],
+      mediaSrc: ["'self'", 'blob:'],
+      connectSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"]
+    }
+  }
+})); // 安全 HTTP Headers
 app.use(cors({
   origin: process.env.ALLOWED_ORIGIN || 'http://localhost:3000',
   methods: ['GET', 'POST', 'PUT', 'DELETE']
@@ -115,7 +140,7 @@ const loginAccountLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true,
-  keyGenerator: (req) => `${req.ip}:${normalizeLoginName(req)}`,
+  keyGenerator: (req) => `${ipKeyGenerator(req.ip)}:${normalizeLoginName(req)}`,
   message: { error: '此帳號登入嘗試過多，請稍後再試' }
 });
 
@@ -126,6 +151,45 @@ const apiLimiter = rateLimit({
   message: { error: '請求過於頻繁，請稍後再試' }
 });
 app.use('/api/', apiLimiter);
+
+// 帳號管理速率限制：每個 IP 每 15 分鐘最多 5 次
+const accountManagementLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: { error: '帳號操作過於頻繁，請稍後再試' }
+});
+
+// 提交查詢端點 rate limit：防止 lookup_token 暴力猜測
+const submissionLookupLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  message: { error: '查詢過於頻繁，請稍後再試' }
+});
+
+// 從多個來源取得 lookup_token（header 優先，再 query param；避免 token 長駐 URL）
+function resolveLookupToken(req) {
+  return String(req.headers['x-lookup-token'] || req.query.token || '').trim();
+}
+
+// ─── 短碼（查詢碼）工具函式 ─────────────────────────────────────────────────────
+// 字元集：排除 0/1/I/O 等易混淆字元，共 32 個字元（2^40 ≈ 1 兆種組合）
+const SHORT_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function generateShortCode() {
+  const bytes = crypto.randomBytes(8);
+  return Array.from({ length: 8 }, (_, i) => SHORT_CODE_CHARS[bytes[i] % 32]).join('');
+}
+// 標準化輸入：轉大寫並移除分隔號，支援 XXXX-XXXX 格式
+function normalizeShortCode(input) {
+  return String(input || '').toUpperCase().replace(/-/g, '').trim();
+}
+// 驗證 submission 的查詢碼：接受完整 token 或短碼（含 XXXX-XXXX 格式）
+function isValidLookupToken(sub, tokenInput) {
+  if (!tokenInput) return false;
+  if (timingSafeStringEqual(sub.lookup_token, tokenInput)) return true;
+  const normalized = normalizeShortCode(tokenInput);
+  if (sub.short_code && normalized.length === 8 && timingSafeStringEqual(sub.short_code, normalized)) return true;
+  return false;
+}
 
 // ─── 音訊靜態服務 ──────────────────────────────────────────────────────────────
 app.use('/audio', express.static(AUDIO_DIR));
@@ -200,6 +264,8 @@ function hashAdminSessionToken(token) {
   return crypto.createHash('sha256').update(String(token || '')).digest('hex');
 }
 
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+
 function appendSetCookie(res, value) {
   const current = res.getHeader('Set-Cookie');
   if (!current) {
@@ -212,11 +278,13 @@ function appendSetCookie(res, value) {
 
 function setAdminSessionCookie(res, token, expiresAt) {
   const expires = new Date(expiresAt).toUTCString();
-  appendSetCookie(res, `admin_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Expires=${expires}`);
+  const secure = IS_PRODUCTION ? '; Secure' : '';
+  appendSetCookie(res, `admin_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict${secure}; Expires=${expires}`);
 }
 
 function clearAdminSessionCookie(res) {
-  appendSetCookie(res, 'admin_session=; Path=/; HttpOnly; SameSite=Lax; Expires=Thu, 01 Jan 1970 00:00:00 GMT');
+  const secure = IS_PRODUCTION ? '; Secure' : '';
+  appendSetCookie(res, `admin_session=; Path=/; HttpOnly; SameSite=Strict${secure}; Expires=Thu, 01 Jan 1970 00:00:00 GMT`);
 }
 
 function hashStudentSessionToken(token) {
@@ -225,11 +293,13 @@ function hashStudentSessionToken(token) {
 
 function setStudentSessionCookie(res, token, expiresAt) {
   const expires = new Date(expiresAt).toUTCString();
-  appendSetCookie(res, `student_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Expires=${expires}`);
+  const secure = IS_PRODUCTION ? '; Secure' : '';
+  appendSetCookie(res, `student_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict${secure}; Expires=${expires}`);
 }
 
 function clearStudentSessionCookie(res) {
-  appendSetCookie(res, 'student_session=; Path=/; HttpOnly; SameSite=Lax; Expires=Thu, 01 Jan 1970 00:00:00 GMT');
+  const secure = IS_PRODUCTION ? '; Secure' : '';
+  appendSetCookie(res, `student_session=; Path=/; HttpOnly; SameSite=Strict${secure}; Expires=Thu, 01 Jan 1970 00:00:00 GMT`);
 }
 
 function getStudentAuth(req) {
@@ -289,7 +359,7 @@ function resolveStudentSubmissionOwner(req) {
     return {
       account_id: accountId,
       session_id: req.studentSession?.id || null,
-      whereSql: 'student_account_id = ?',
+      ownerColumn: 'student_account_id',
       params: [accountId]
     };
   }
@@ -300,7 +370,7 @@ function resolveStudentSubmissionOwner(req) {
   return {
     account_id: null,
     session_id: sessionId,
-    whereSql: 'student_session_id = ?',
+    ownerColumn: 'student_session_id',
     params: [sessionId]
   };
 }
@@ -367,6 +437,16 @@ function safeEqual(a, b) {
   if (!Buffer.isBuffer(a) || !Buffer.isBuffer(b)) return false;
   if (a.length !== b.length) return false;
   return crypto.timingSafeEqual(a, b);
+}
+
+function timingSafeStringEqual(a, b) {
+  const bufA = Buffer.from(String(a || ''));
+  const bufB = Buffer.from(String(b || ''));
+  if (bufA.length !== bufB.length) {
+    crypto.timingSafeEqual(bufA, crypto.randomBytes(bufA.length));
+    return false;
+  }
+  return crypto.timingSafeEqual(bufA, bufB);
 }
 
 function verifyPassword(password, storedHash) {
@@ -438,11 +518,15 @@ app.post('/api/login', loginIpLimiter, loginAccountLimiter, (req, res) => {
   const adminPwd = admin ? verifyPassword(password, admin.password_hash) : { ok: false, needsUpgrade: false };
   if (admin && admin.is_active && adminPwd.ok) {
     if (adminPwd.needsUpgrade) {
-      db.prepare(`
-        UPDATE admins
-        SET password_hash = ?, updated_at = datetime('now','localtime')
-        WHERE id = ?
-      `).run(hashPassword(password), admin.id);
+      // 非同步升級，避免 timing 差異洩漏帳號使用舊雜湊
+      setImmediate(() => {
+        try {
+          db.prepare(`UPDATE admins SET password_hash = ?, updated_at = datetime('now','localtime') WHERE id = ?`)
+            .run(hashPassword(password), admin.id);
+        } catch (err) {
+          console.error('[Auth] admin password upgrade failed:', err.message);
+        }
+      });
     }
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 12).toISOString();
@@ -472,11 +556,15 @@ app.post('/api/login', loginIpLimiter, loginAccountLimiter, (req, res) => {
   const studentPwd = student ? verifyPassword(password, student.password_hash) : { ok: false, needsUpgrade: false };
   if (student && student.is_active && studentPwd.ok) {
     if (studentPwd.needsUpgrade) {
-      db.prepare(`
-        UPDATE students
-        SET password_hash = ?, updated_at = datetime('now','localtime')
-        WHERE id = ?
-      `).run(hashPassword(password), student.id);
+      // 非同步升級，避免 timing 差異洩漏帳號使用舊雜湊
+      setImmediate(() => {
+        try {
+          db.prepare(`UPDATE students SET password_hash = ?, updated_at = datetime('now','localtime') WHERE id = ?`)
+            .run(hashPassword(password), student.id);
+        } catch (err) {
+          console.error('[Auth] student password upgrade failed:', err.message);
+        }
+      });
     }
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 12).toISOString();
@@ -583,7 +671,7 @@ app.get('/api/admin/accounts', requireAdmin, (req, res) => {
   });
 });
 
-app.post('/api/admin/accounts/admins', requireAdmin, (req, res) => {
+app.post('/api/admin/accounts/admins', requireAdmin, accountManagementLimiter, (req, res) => {
   const { username, password, display_name, is_active = 1 } = req.body || {};
   const loginName = String(username || '').trim();
   const pwd = String(password || '');
@@ -634,7 +722,7 @@ app.put('/api/admin/accounts/admins/:id', requireAdmin, (req, res) => {
   res.json({ success: true, admin: updated });
 });
 
-app.post('/api/admin/accounts/students', requireAdmin, (req, res) => {
+app.post('/api/admin/accounts/students', requireAdmin, accountManagementLimiter, (req, res) => {
   const { username, password, student_name, student_id, is_active = 1 } = req.body || {};
   const loginName = String(username || '').trim();
   const pwd = String(password || '');
@@ -1408,6 +1496,14 @@ app.get('/api/exams/:id', requireAdmin, (req, res) => {
   res.json({ ...exam, questions });
 });
 
+function shuffleArray(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
 function getPublicExamPayload(req, res) {
   const exam = db.prepare('SELECT * FROM exams WHERE id = ?').get(req.params.id);
   const availability = examAvailability(exam, req);
@@ -1430,7 +1526,31 @@ function getPublicExamPayload(req, res) {
     JOIN subjects s ON s.id = q.subject_id
     WHERE eq.exam_id = ? ORDER BY eq.sort_order
   `).all(req.params.id);
-  return { ...summarizeExamForPublic(exam), questions: dedupeQuestionsByContent(questions) };
+  let qs = dedupeQuestionsByContent(questions);
+  if (exam.randomize_questions) qs = shuffleArray(qs);
+  if (exam.randomize_options) {
+    qs = qs.map(q => {
+      if (q.type !== 'choice') return q;
+      const opts = [
+        { key: 'a', val: q.option_a },
+        { key: 'b', val: q.option_b },
+        { key: 'c', val: q.option_c },
+        { key: 'd', val: q.option_d }
+      ].filter(o => o.val != null && o.val !== '');
+      if (opts.length < 2) return q;
+      shuffleArray(opts);
+      const result = { ...q };
+      const remap = {}; // remap[新顯示字母] = 原字母（大寫）
+      opts.forEach((o, i) => {
+        const newKey = String.fromCharCode(97 + i); // a,b,c,d
+        result[`option_${newKey}`] = o.val;
+        remap[String.fromCharCode(65 + i)] = o.key.toUpperCase(); // 'A' → 原鍵大寫
+      });
+      result._option_remap = remap; // 前端用來還原正確答案字母
+      return result;
+    });
+  }
+  return { ...summarizeExamForPublic(exam), questions: qs };
 }
 
 app.get('/api/public/exams/:id', (req, res) => {
@@ -1468,7 +1588,7 @@ app.post('/api/public/exams/:id/session', requireStudent, requireStudentAccount,
     FROM submissions
     WHERE exam_id = ?
       AND status = 'in_progress'
-      AND ${owner.whereSql}
+      AND ${owner.ownerColumn === 'student_account_id' ? 'student_account_id' : 'student_session_id'} = ?
     ORDER BY id DESC
     LIMIT 1
   `).get(req.params.id, ...owner.params);
@@ -1490,16 +1610,17 @@ app.post('/api/public/exams/:id/session', requireStudent, requireStudentAccount,
     FROM submissions
     WHERE exam_id = ?
       AND status = 'submitted'
-      AND ${owner.whereSql}
+      AND ${owner.ownerColumn === 'student_account_id' ? 'student_account_id' : 'student_session_id'} = ?
   `).get(req.params.id, ...owner.params).cnt;
   if ((exam.max_attempts || 0) > 0 && priorAttempts >= exam.max_attempts) {
     return res.status(403).json({ error: '已達此試卷可作答次數上限' });
   }
 
-  const lookupToken = crypto.randomBytes(12).toString('hex');
+  const lookupToken = crypto.randomBytes(32).toString('hex');
+  const shortCode = generateShortCode();
   const created = db.prepare(`
-    INSERT INTO submissions (exam_id, student_name, student_id, student_account_id, student_session_id, answers, score, total_score, lookup_token, started_at, last_seen_at, status)
-    VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, 'in_progress')
+    INSERT INTO submissions (exam_id, student_name, student_id, student_account_id, student_session_id, answers, score, total_score, lookup_token, short_code, started_at, last_seen_at, status)
+    VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, 'in_progress')
   `).run(
     req.params.id,
     student_name,
@@ -1508,6 +1629,7 @@ app.post('/api/public/exams/:id/session', requireStudent, requireStudentAccount,
     owner.session_id || null,
     '{}',
     lookupToken,
+    shortCode,
     datetimeNow(),
     datetimeNow()
   );
@@ -1515,6 +1637,7 @@ app.post('/api/public/exams/:id/session', requireStudent, requireStudentAccount,
     resumed: false,
     submission_id: created.lastInsertRowid,
     lookup_token: lookupToken,
+    short_code: shortCode,
     answers: {},
     started_at: datetimeNow(),
     status: 'in_progress'
@@ -1524,7 +1647,8 @@ app.post('/api/public/exams/:id/session', requireStudent, requireStudentAccount,
 app.post('/api/exams', requireAdmin, (req, res) => {
   const {
     title, description, duration_min = 40, status = 'active', question_ids,
-    starts_at = null, ends_at = null, access_code = null, max_attempts = 0, allow_resume = 1
+    starts_at = null, ends_at = null, access_code = null, max_attempts = 0, allow_resume = 1,
+    randomize_questions = 0, randomize_options = 0
   } = req.body;
   if (!title) return res.status(400).json({ error: '試卷標題為必填' });
   if (!['draft', 'active', 'closed'].includes(status))
@@ -1533,13 +1657,15 @@ app.post('/api/exams', requireAdmin, (req, res) => {
   // L-2: Transaction 保護多步驟寫入
   const createExam = db.transaction(() => {
     const exam = db.prepare(`
-      INSERT INTO exams (title, description, duration_min, status, starts_at, ends_at, access_code, max_attempts, allow_resume)
-      VALUES (?,?,?,?,?,?,?,?,?)
+      INSERT INTO exams (title, description, duration_min, status, starts_at, ends_at, access_code, max_attempts, allow_resume, randomize_questions, randomize_options)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)
     `).run(
       title, description||null, duration_min, status,
       starts_at || null, ends_at || null, access_code || null,
       Math.max(0, parseInt(max_attempts, 10) || 0),
-      allow_resume ? 1 : 0
+      allow_resume ? 1 : 0,
+      randomize_questions ? 1 : 0,
+      randomize_options ? 1 : 0
     );
     if (normalizedQuestionIds.length) {
       const ins = db.prepare(`INSERT INTO exam_questions (exam_id,question_id,sort_order,score) VALUES (?,?,?,?)`);
@@ -1552,7 +1678,7 @@ app.post('/api/exams', requireAdmin, (req, res) => {
 });
 
 app.put('/api/exams/:id', requireAdmin, (req, res) => {
-  const { title, description, duration_min, status, question_ids, starts_at, ends_at, access_code, max_attempts, allow_resume } = req.body;
+  const { title, description, duration_min, status, question_ids, starts_at, ends_at, access_code, max_attempts, allow_resume, randomize_questions, randomize_options } = req.body;
   const exam = db.prepare('SELECT * FROM exams WHERE id = ?').get(req.params.id);
   if (!exam) return res.status(404).json({ error: '找不到試卷' });
   const normalizedQuestionIds = question_ids ? normalizeExamQuestionIds(question_ids) : null;
@@ -1562,7 +1688,8 @@ app.put('/api/exams/:id', requireAdmin, (req, res) => {
       UPDATE exams SET
         title=COALESCE(?,title), description=COALESCE(?,description),
         duration_min=COALESCE(?,duration_min), status=COALESCE(?,status),
-        starts_at=?, ends_at=?, access_code=?, max_attempts=?, allow_resume=?
+        starts_at=?, ends_at=?, access_code=?, max_attempts=?, allow_resume=?,
+        randomize_questions=COALESCE(?,randomize_questions), randomize_options=COALESCE(?,randomize_options)
       WHERE id=?
     `).run(
       title||null, description||null, duration_min||null, status||null,
@@ -1571,6 +1698,8 @@ app.put('/api/exams/:id', requireAdmin, (req, res) => {
       access_code === undefined ? exam.access_code : (access_code || null),
       max_attempts === undefined ? exam.max_attempts : Math.max(0, parseInt(max_attempts, 10) || 0),
       allow_resume === undefined ? exam.allow_resume : (allow_resume ? 1 : 0),
+      randomize_questions === undefined ? null : (randomize_questions ? 1 : 0),
+      randomize_options === undefined ? null : (randomize_options ? 1 : 0),
       req.params.id
     );
     if (normalizedQuestionIds) {
@@ -1730,7 +1859,7 @@ app.put('/api/public/submissions/:id/progress', requireStudent, requireStudentAc
   const submission = db.prepare(`SELECT * FROM submissions WHERE id = ?`).get(req.params.id);
   if (!submission) return res.status(404).json({ error: '找不到作答 session' });
   if (!matchesStudentSubmissionOwner(req, submission)) return res.status(403).json({ error: '無權限操作此作答紀錄' });
-  if (submission.lookup_token !== lookup_token) return res.status(403).json({ error: '查詢碼錯誤' });
+  if (!timingSafeStringEqual(submission.lookup_token, lookup_token)) return res.status(403).json({ error: '查詢碼錯誤' });
   if (submission.status !== 'in_progress') return res.status(400).json({ error: '此作答已完成，無法再更新進度' });
   const now = datetimeNow();
   db.prepare(`
@@ -1757,22 +1886,28 @@ app.post('/api/exams/:id/submit', submitLimiter, requireStudent, requireStudentA
     : null;
   if (existingSubmission) {
     if (!matchesStudentSubmissionOwner(req, existingSubmission)) return res.status(403).json({ error: '無權限操作此作答紀錄' });
-    if (existingSubmission.lookup_token !== lookup_token) return res.status(403).json({ error: '查詢碼錯誤' });
+    if (!timingSafeStringEqual(existingSubmission.lookup_token, lookup_token)) return res.status(403).json({ error: '查詢碼錯誤' });
     if (existingSubmission.status === 'submitted') return res.status(400).json({ error: '此作答已經繳交' });
+    // 伺服器端時間驗證：超時 2 分鐘寬限後拒絕提交
+    if (exam.duration_min > 0 && existingSubmission.started_at) {
+      const elapsedSec = (Date.now() - new Date(existingSubmission.started_at).getTime()) / 1000;
+      const limitSec = exam.duration_min * 60 + 120;
+      if (elapsedSec > limitSec) return res.status(403).json({ error: '作答時間已超過，無法提交' });
+    }
   }
   const priorAttempts = db.prepare(`
     SELECT COUNT(*) AS cnt
     FROM submissions
     WHERE exam_id = ?
       AND status = 'submitted'
-      AND ${owner.whereSql}
+      AND ${owner.ownerColumn === 'student_account_id' ? 'student_account_id' : 'student_session_id'} = ?
   `).get(req.params.id, ...owner.params).cnt;
   if ((exam.max_attempts || 0) > 0 && priorAttempts >= exam.max_attempts && !existingSubmission) {
     return res.status(403).json({ error: '已達此試卷可作答次數上限' });
   }
 
   const questions = db.prepare(`
-    SELECT eq.question_id, eq.score, q.answer, q.type
+    SELECT eq.question_id, eq.score, q.answer, q.type, q.tolerance
     FROM exam_questions eq JOIN questions q ON q.id = eq.question_id
     WHERE eq.exam_id = ?
   `).all(req.params.id);
@@ -1803,6 +1938,18 @@ app.post('/api/exams/:id/submit', submitLimiter, requireStudent, requireStudentA
       isCorrect = allCorrect ? 1 : 0;
       scoreEarned = isCorrect ? q.score : 0;
       gradingStatus = 'auto';
+    } else if (q.type === 'calculation') {
+      // 計算題：支援數值容差批改（tolerance 欄位，預設 0.01）
+      const givenNum = parseFloat(given);
+      const correctNum = parseFloat(correct);
+      if (!isNaN(givenNum) && !isNaN(correctNum)) {
+        const tol = q.tolerance != null ? q.tolerance : 0.01;
+        isCorrect = Math.abs(givenNum - correctNum) <= tol ? 1 : 0;
+      } else {
+        isCorrect = given.toLowerCase() === correct.toLowerCase() ? 1 : 0;
+      }
+      scoreEarned = isCorrect ? q.score : 0;
+      gradingStatus = 'auto';
     } else {
       isCorrect = given.toLowerCase() === correct.toLowerCase() ? 1 : 0;
       scoreEarned = isCorrect ? q.score : 0;
@@ -1817,6 +1964,7 @@ app.post('/api/exams/:id/submit', submitLimiter, requireStudent, requireStudentA
     const now = datetimeNow();
     let submissionRowId;
     let persistedLookupToken;
+    let persistedShortCode;
     if (existingSubmission) {
       db.prepare(`DELETE FROM answer_details WHERE submission_id = ?`).run(existingSubmission.id);
       db.prepare(`
@@ -1837,11 +1985,19 @@ app.post('/api/exams/:id/submit', submitLimiter, requireStudent, requireStudentA
       );
       submissionRowId = existingSubmission.id;
       persistedLookupToken = existingSubmission.lookup_token;
+      // 若既有紀錄沒有短碼（舊資料），補產生一個
+      if (existingSubmission.short_code) {
+        persistedShortCode = existingSubmission.short_code;
+      } else {
+        persistedShortCode = generateShortCode();
+        db.prepare(`UPDATE submissions SET short_code = ? WHERE id = ?`).run(persistedShortCode, existingSubmission.id);
+      }
     } else {
-      persistedLookupToken = crypto.randomBytes(12).toString('hex');
+      persistedLookupToken = crypto.randomBytes(32).toString('hex');
+      persistedShortCode = generateShortCode();
       const sub = db.prepare(`
-        INSERT INTO submissions (exam_id, student_name, student_id, student_account_id, student_session_id, answers, score, total_score, lookup_token, started_at, last_seen_at, status)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO submissions (exam_id, student_name, student_id, student_account_id, student_session_id, answers, score, total_score, lookup_token, short_code, started_at, last_seen_at, status)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
       `).run(
         req.params.id,
         student_name,
@@ -1852,6 +2008,7 @@ app.post('/api/exams/:id/submit', submitLimiter, requireStudent, requireStudentA
         earnedScore,
         totalScore,
         persistedLookupToken,
+        persistedShortCode,
         now,
         now,
         'submitted'
@@ -1868,16 +2025,19 @@ app.post('/api/exams/:id/submit', submitLimiter, requireStudent, requireStudentA
       else if (d.is_dont_know) updDontKnow.run(d.question_id);
       else if (d.grading_status !== 'pending') updWrong.run(d.question_id);
     });
-    return { id: submissionRowId, lookup_token: persistedLookupToken };
+    return { id: submissionRowId, lookup_token: persistedLookupToken, short_code: persistedShortCode };
   });
   const submissionId = saveSubmission();
 
   // 非同步重新評估題目品質（不阻塞回應）
-  setImmediate(() => archiveAndReplace());
+  setImmediate(() => {
+    try { archiveAndReplace(); } catch (err) { console.error('[QualityReview] archiveAndReplace 失敗:', err); }
+  });
 
   res.json({
     submission_id: submissionId.id,
     lookup_token: submissionId.lookup_token,
+    short_code: submissionId.short_code,
     score: earnedScore,
     total_score: totalScore,
     percentage: Math.round(earnedScore / totalScore * 100)
@@ -1910,7 +2070,7 @@ app.post('/api/public/audio/upload', requireStudent, requireStudentAccount, (req
       removeUploadedFile(req.file);
       return res.status(403).json({ error: '無權限操作此作答紀錄' });
     }
-    if (submission.lookup_token !== lookupToken) {
+    if (!timingSafeStringEqual(submission.lookup_token, lookupToken)) {
       removeUploadedFile(req.file);
       return res.status(403).json({ error: '查詢碼錯誤' });
     }
@@ -1925,7 +2085,7 @@ app.post('/api/public/audio/upload', requireStudent, requireStudentAccount, (req
 });
 
 // 重新評估高作答題目的品質，改為送審而不是直接封存
-async function archiveAndReplace() {
+function archiveAndReplace() {
   const toArchive = db.prepare(`
     SELECT q.*, s.name as subject_name, s.code as subject_code
     FROM questions q JOIN subjects s ON s.id = q.subject_id
@@ -1935,6 +2095,7 @@ async function archiveAndReplace() {
   `).all();
   if (!toArchive.length) return;
 
+  const toReview = [];
   for (const q of toArchive) {
     const totalAttempts = (q.correct_count || 0) + (q.wrong_count || 0);
     const passRate = totalAttempts > 0 ? (q.correct_count || 0) / totalAttempts : 0;
@@ -1945,24 +2106,33 @@ async function archiveAndReplace() {
       quality_score: Math.max(0, 100 - (Math.abs(empiricalDifficulty - q.difficulty) >= 2 ? 20 : 0) - (passRate >= 0.95 || passRate <= 0.05 ? 20 : 0))
     });
     if (governance.reviewStatus !== 'needs_review') continue;
-    persistQuestionGovernance(q.id, governance);
-    console.log(`[QualityReview] 題目 #${q.id}（${q.subject_name}，難度${q.difficulty}）已列入審查清單`);
+    toReview.push({ q, governance });
   }
+  if (!toReview.length) return;
+
+  const batchPersist = db.transaction(() => {
+    for (const { q, governance } of toReview) {
+      persistQuestionGovernance(q.id, governance);
+      console.log(`[QualityReview] 題目 #${q.id}（${q.subject_name}，難度${q.difficulty}）已列入審查清單`);
+    }
+  });
+  batchPersist();
 }
 
 // GET submission result
-app.get('/api/submissions/lookup', (req, res) => {
-  const { token } = req.query;
+app.get('/api/submissions/lookup', submissionLookupLimiter, (req, res) => {
+  const token = resolveLookupToken(req);
   if (!token) return res.status(400).json({ error: '缺少查詢碼' });
+  const normalized = normalizeShortCode(token);
   const row = db.prepare(`
-    SELECT s.id, s.exam_id, s.student_name, s.student_id, s.score, s.total_score, s.submitted_at, s.status,
+    SELECT s.id, s.exam_id, s.student_name, s.student_id, s.score, s.total_score, s.submitted_at, s.status, s.lookup_token, s.short_code,
            e.title AS exam_title
     FROM submissions s
     JOIN exams e ON e.id = s.exam_id
-    WHERE s.lookup_token = ?
+    WHERE s.lookup_token = ? OR (s.short_code IS NOT NULL AND s.short_code = ?)
     ORDER BY s.id DESC
     LIMIT 1
-  `).get(String(token));
+  `).get(String(token), normalized);
   if (!row) return res.status(404).json({ error: '找不到符合的作答紀錄' });
   res.json(row);
 });
@@ -1973,11 +2143,11 @@ app.get('/api/student/submissions', requireStudent, requireStudentAccount, (req,
   if (!owner) return res.json({ student: req.student, submissions: [] });
   const rows = db.prepare(`
     SELECT s.id, s.exam_id, s.student_name, s.student_id, s.score, s.total_score,
-           s.submitted_at, s.status, s.lookup_token, e.title AS exam_title
+           s.submitted_at, s.status, s.lookup_token, s.short_code, e.title AS exam_title
     FROM submissions s
     JOIN exams e ON e.id = s.exam_id
     WHERE s.status = 'submitted'
-      AND ${owner.whereSql}
+      AND s.${owner.ownerColumn === 'student_account_id' ? 'student_account_id' : 'student_session_id'} = ?
     ORDER BY s.submitted_at DESC, s.id DESC
     LIMIT ?
   `).all(...owner.params, limit);
@@ -1987,12 +2157,12 @@ app.get('/api/student/submissions', requireStudent, requireStudentAccount, (req,
   });
 });
 
-app.get('/api/submissions/:id', (req, res) => {
-  const token = String(req.query.token || '');
+app.get('/api/submissions/:id', submissionLookupLimiter, (req, res) => {
+  const token = resolveLookupToken(req);
   if (!token) return res.status(403).json({ error: '缺少查詢碼' });
   const sub = db.prepare('SELECT * FROM submissions WHERE id = ?').get(req.params.id);
   if (!sub) return res.status(404).json({ error: '找不到作答紀錄' });
-  if (sub.lookup_token !== token) return res.status(403).json({ error: '查詢碼錯誤' });
+  if (!isValidLookupToken(sub, token)) return res.status(403).json({ error: '查詢碼錯誤' });
   const details = db.prepare(`
     SELECT ad.*, q.content, q.explanation, q.type,
            q.option_a, q.option_b, q.option_c, q.option_d
@@ -2003,12 +2173,12 @@ app.get('/api/submissions/:id', (req, res) => {
 });
 
 // GET analysis report for a submission
-app.get('/api/submissions/:id/analysis', (req, res) => {
-  const token = String(req.query.token || '');
+app.get('/api/submissions/:id/analysis', submissionLookupLimiter, (req, res) => {
+  const token = resolveLookupToken(req);
   if (!token) return res.status(403).json({ error: '缺少查詢碼' });
   const sub = db.prepare('SELECT * FROM submissions WHERE id = ?').get(req.params.id);
   if (!sub) return res.status(404).json({ error: '找不到作答紀錄' });
-  if (sub.lookup_token !== token) return res.status(403).json({ error: '查詢碼錯誤' });
+  if (!isValidLookupToken(sub, token)) return res.status(403).json({ error: '查詢碼錯誤' });
 
   const exam = db.prepare('SELECT title FROM exams WHERE id = ?').get(sub.exam_id);
   const details = db.prepare(`
@@ -2544,7 +2714,7 @@ app.get('/api/recommendations', requireStudent, requireStudentAccount, (req, res
     SELECT id
     FROM submissions
     WHERE status = 'submitted'
-      AND ${owner.whereSql}
+      AND ${owner.ownerColumn === 'student_account_id' ? 'student_account_id' : 'student_session_id'} = ?
   `).all(...owner.params);
 
   if (!subs.length) {
@@ -2627,7 +2797,130 @@ app.get('/api/recommendations', requireStudent, requireStudentAccount, (req, res
   });
 });
 
+// POST clone an exam (copy as draft)
+app.post('/api/exams/:id/clone', requireAdmin, (req, res) => {
+  const exam = db.prepare('SELECT * FROM exams WHERE id = ?').get(req.params.id);
+  if (!exam) return res.status(404).json({ error: '找不到試卷' });
+  const cloneExam = db.transaction(() => {
+    const newExam = db.prepare(`
+      INSERT INTO exams (title, description, duration_min, status, starts_at, ends_at, access_code, max_attempts, allow_resume, randomize_questions, randomize_options)
+      VALUES (?, ?, ?, 'draft', NULL, NULL, NULL, ?, ?, ?, ?)
+    `).run(
+      `${exam.title}（複製）`, exam.description || null, exam.duration_min,
+      exam.max_attempts || 0, exam.allow_resume || 1,
+      exam.randomize_questions || 0, exam.randomize_options || 0
+    );
+    const newExamId = newExam.lastInsertRowid;
+    const eqs = db.prepare('SELECT question_id, sort_order, score FROM exam_questions WHERE exam_id = ?').all(exam.id);
+    if (eqs.length) {
+      const ins = db.prepare('INSERT INTO exam_questions (exam_id, question_id, sort_order, score) VALUES (?, ?, ?, ?)');
+      eqs.forEach(eq => ins.run(newExamId, eq.question_id, eq.sort_order, eq.score));
+    }
+    return newExamId;
+  });
+  const newId = cloneExam();
+  res.status(201).json({ id: newId, message: '試卷複製成功' });
+});
+
+// POST batch AI grade all pending writing answers in an exam
+app.post('/api/exams/:id/batch-ai-grade', requireAdmin, async (req, res) => {
+  const exam = db.prepare('SELECT id FROM exams WHERE id = ?').get(req.params.id);
+  if (!exam) return res.status(404).json({ error: '找不到試卷' });
+  const validProviders = ['openai', 'gemini', 'claude'];
+  const provider = validProviders.includes(req.body?.provider) ? req.body.provider : (process.env.LLM_PROVIDER || 'gemini');
+  const pending = db.prepare(`
+    SELECT ad.id, ad.given_answer, q.content as q_content, q.answer as q_answer,
+           COALESCE(eq.score, 10) as max_score
+    FROM answer_details ad
+    JOIN questions q ON q.id = ad.question_id
+    JOIN submissions s ON s.id = ad.submission_id
+    LEFT JOIN exam_questions eq ON eq.question_id = ad.question_id AND eq.exam_id = s.exam_id
+    WHERE s.exam_id = ? AND ad.grading_status = 'pending' AND q.type = 'writing'
+  `).all(req.params.id);
+  if (!pending.length) return res.json({ message: '沒有待批改的作答', graded: 0, failed: 0 });
+  const results = await Promise.allSettled(pending.map(async (ad) => {
+    const { score, notes, dim_content, dim_structure, dim_language, dim_norms } = await gradeEssay(provider, ad.q_content, ad.given_answer || '', ad.q_answer || '', ad.max_score);
+    db.prepare('UPDATE answer_details SET ai_score=?, ai_notes=?, dim_content=?, dim_structure=?, dim_language=?, dim_norms=? WHERE id=?')
+      .run(score, notes, dim_content, dim_structure, dim_language, dim_norms, ad.id);
+    return ad.id;
+  }));
+  const graded = results.filter(r => r.status === 'fulfilled').length;
+  const failed = results.filter(r => r.status === 'rejected').length;
+  res.json({ message: '批次 AI 批改完成', graded, failed });
+});
+
+// GET generate PDF report for a submission
+const PDFDocument = require('pdfkit');
+const PDF_FONT_PATH = (() => {
+  const candidates = [
+    'C:/Windows/Fonts/msjh.ttc',   // Microsoft JhengHei (Traditional Chinese, Windows)
+    'C:/Windows/Fonts/msyh.ttc',   // Microsoft YaHei (Simplified Chinese, Windows)
+    'C:/Windows/Fonts/simsun.ttc', // SimSun fallback
+    '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc', // Linux
+    '/System/Library/Fonts/PingFang.ttc'  // macOS
+  ];
+  const fs = require('fs');
+  return candidates.find(p => fs.existsSync(p)) || null;
+})();
+
+app.get('/api/submissions/:id/report.pdf', submissionLookupLimiter, (req, res) => {
+  const lookup_token = resolveLookupToken(req);
+  const sub = db.prepare('SELECT * FROM submissions WHERE id = ?').get(req.params.id);
+  if (!sub) return res.status(404).json({ error: '找不到提交紀錄' });
+  if (!isValidLookupToken(sub, lookup_token)) {
+    return res.status(403).json({ error: '查詢碼錯誤' });
+  }
+  const exam = db.prepare('SELECT * FROM exams WHERE id = ?').get(sub.exam_id);
+  const details = db.prepare(`
+    SELECT ad.*, q.content, q.answer, q.explanation, q.type, q.option_a, q.option_b, q.option_c, q.option_d
+    FROM answer_details ad JOIN questions q ON q.id = ad.question_id
+    WHERE ad.submission_id = ? ORDER BY ad.id
+  `).all(sub.id);
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="report_${sub.id}.pdf"`);
+
+  const doc = new PDFDocument({ margin: 50, size: 'A4' });
+  if (PDF_FONT_PATH) {
+    try { doc.registerFont('CJK', PDF_FONT_PATH); doc.font('CJK'); } catch (_) {}
+  }
+  doc.pipe(res);
+
+  // Header
+  doc.fontSize(18).text(exam ? exam.title : '考試報告', { align: 'center' });
+  doc.moveDown(0.5);
+  doc.fontSize(12).text(`學生：${sub.student_name}`, { align: 'center' });
+  doc.text(`得分：${sub.score || 0} / ${sub.total_score || 0}`, { align: 'center' });
+  doc.text(`提交時間：${sub.submitted_at || sub.last_seen_at || ''}`, { align: 'center' });
+  doc.moveDown(1);
+  doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke();
+  doc.moveDown(0.5);
+
+  // Question details
+  details.forEach((d, i) => {
+    const correct = d.is_correct === 1 ? '[V]' : d.is_correct === 0 ? '[X]' : '[-]';
+    doc.fontSize(11).text(`${i + 1}. ${(d.content || '').substring(0, 200)}`, { continued: false });
+    doc.fontSize(10)
+      .text(`   作答：${d.given_answer || '（未作答）'}   正確答案：${d.answer || '-'}   結果：${correct}   得分：${d.score_earned || 0}`)
+      .moveDown(0.3);
+    if (d.explanation) {
+      doc.fontSize(9).fillColor('#555555').text(`   解析：${d.explanation.substring(0, 150)}`).fillColor('#000000').moveDown(0.3);
+    }
+  });
+
+  doc.end();
+});
+
 // ─── Start ────────────────────────────────────────────────────────────────────
+// 全域未捕捉錯誤處理，防止程序悄無聲息崩潰
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL] unhandledRejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] uncaughtException:', err);
+  process.exit(1);
+});
+
 // L-1: 全域錯誤處理，避免 stack trace 洩漏給客戶端
 app.use((err, req, res, next) => {
   console.error(`[ERROR] ${req.method} ${req.url}:`, err.message);

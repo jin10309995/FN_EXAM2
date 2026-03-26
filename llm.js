@@ -4,6 +4,18 @@
  * 環境變數：LLM_PROVIDER, OPENAI_API_KEY, GEMINI_API_KEY, ANTHROPIC_API_KEY
  */
 
+const LLM_TIMEOUT_MS = 60_000; // 60 秒
+
+/** 為任意 Promise 加上 timeout，超時後拋出錯誤 */
+function withTimeout(promise, label = 'LLM') {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} 請求逾時（${LLM_TIMEOUT_MS / 1000} 秒），請稍後重試`)), LLM_TIMEOUT_MS)
+    )
+  ]);
+}
+
 const SYSTEM_PROMPT = `你是一位專業的臺灣國中數理資優班出題老師，負責出高品質的繁體中文考題。
 請根據使用者的要求，輸出指定數量的題目，格式為 JSON 陣列，每個物件包含以下欄位：
 - content: 題目內容（字串，必填）
@@ -41,7 +53,7 @@ async function callOpenAI(systemPrompt, userPrompt) {
   const { OpenAI } = require('openai');
   const client = new OpenAI({ apiKey });
 
-  const response = await client.chat.completions.create({
+  const response = await withTimeout(client.chat.completions.create({
     model: 'gpt-4o-mini',
     messages: [
       { role: 'system', content: systemPrompt },
@@ -49,7 +61,7 @@ async function callOpenAI(systemPrompt, userPrompt) {
     ],
     temperature: 0.8,
     response_format: { type: 'json_object' }
-  });
+  }), 'OpenAI');
 
   const raw = response.choices[0].message.content;
   return parseJsonResponse(raw);
@@ -67,7 +79,7 @@ async function callGemini(systemPrompt, userPrompt) {
   });
 
   const fullPrompt = `${systemPrompt}\n\n${userPrompt}`;
-  const result = await model.generateContent(fullPrompt);
+  const result = await withTimeout(model.generateContent(fullPrompt), 'Gemini');
   const raw = result.response.text();
   return parseJsonResponse(raw);
 }
@@ -79,12 +91,12 @@ async function callClaude(systemPrompt, userPrompt) {
   const Anthropic = require('@anthropic-ai/sdk');
   const client = new Anthropic.default({ apiKey });
 
-  const message = await client.messages.create({
+  const message = await withTimeout(client.messages.create({
     model: 'claude-3-5-haiku-20241022',
     max_tokens: 4096,
     system: systemPrompt,
     messages: [{ role: 'user', content: userPrompt }]
-  });
+  }), 'Claude');
 
   const raw = message.content[0].text;
   return parseJsonResponse(raw);
@@ -199,11 +211,11 @@ async function callOpenAIText(systemPrompt, userPrompt) {
   if (!apiKey) throw new Error('OPENAI_API_KEY 未設定');
   const { OpenAI } = require('openai');
   const client = new OpenAI({ apiKey });
-  const response = await client.chat.completions.create({
+  const response = await withTimeout(client.chat.completions.create({
     model: 'gpt-4o-mini',
     messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
     temperature: 0.7
-  });
+  }), 'OpenAI');
   return response.choices[0].message.content;
 }
 
@@ -216,7 +228,7 @@ async function callGeminiText(systemPrompt, userPrompt) {
     model: 'gemini-2.5-flash',
     generationConfig: { temperature: 0.7 }
   });
-  const result = await model.generateContent(`${systemPrompt}\n\n${userPrompt}`);
+  const result = await withTimeout(model.generateContent(`${systemPrompt}\n\n${userPrompt}`), 'Gemini');
   return result.response.text();
 }
 
@@ -225,12 +237,12 @@ async function callClaudeText(systemPrompt, userPrompt) {
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY 未設定');
   const Anthropic = require('@anthropic-ai/sdk');
   const client = new Anthropic.default({ apiKey });
-  const message = await client.messages.create({
+  const message = await withTimeout(client.messages.create({
     model: 'claude-3-5-haiku-20241022',
     max_tokens: 2048,
     system: systemPrompt,
     messages: [{ role: 'user', content: userPrompt }]
-  });
+  }), 'Claude');
   return message.content[0].text;
 }
 
