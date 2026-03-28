@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>試卷管理 - FN-EXAM</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>body { font-family: 'Microsoft JhengHei', sans-serif; }</style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+  <header class="bg-gray-900 text-white px-6 py-3 flex items-center justify-between shadow-lg">
+    <div class="flex items-center gap-4">
+      <span class="text-xl font-bold text-blue-400">📚 FN-EXAM</span>
+      <span class="text-gray-400">|</span>
+      <span class="text-sm text-gray-300">管理後台 › 試卷管理</span>
+    </div>
+    <span class="text-sm text-gray-300">👨‍🏫 admin</span>
+  </header>
+
+  <div class="flex">
+    <aside class="w-52 bg-gray-800 text-white min-h-screen p-4">
+      <nav class="space-y-1">
+        <a class="flex items-center gap-2 px-3 py-2 rounded-lg text-gray-300 text-sm">📝 題庫管理</a>
+        <a class="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium">📋 試卷管理</a>
+        <a class="flex items-center gap-2 px-3 py-2 rounded-lg text-gray-300 text-sm">🏆 成績查詢</a>
+        <a class="flex items-center gap-2 px-3 py-2 rounded-lg text-gray-300 text-sm">✍️ 人工批改</a>
+        <a class="flex items-center gap-2 px-3 py-2 rounded-lg text-gray-300 text-sm">🤖 AI 出題</a>
+      </nav>
+    </aside>
+
+    <main class="flex-1 p-6">
+      <div class="flex items-center justify-between mb-6">
+        <h2 class="text-xl font-bold text-gray-800">試卷管理</h2>
+        <button class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium">➕ 新增試卷</button>
+      </div>
+
+      <div class="space-y-4">
+        <!-- Exam Card 1 - Active -->
+        <div class="bg-white rounded-xl shadow p-5">
+          <div class="flex items-start justify-between">
+            <div>
+              <div class="flex items-center gap-2 mb-1">
+                <span class="bg-green-100 text-green-700 text-xs font-bold px-2 py-0.5 rounded-full">進行中</span>
+                <span class="bg-purple-100 text-purple-700 text-xs px-2 py-0.5 rounded-full">🔀 隨機排序</span>
+              </div>
+              <h3 class="font-bold text-gray-800 text-lg">2026 年度數學入學測驗（模擬卷 A）</h3>
+              <div class="flex gap-4 mt-1.5 text-sm text-gray-500">
+                <span>📋 20 題</span>
+                <span>⏱ 45 分鐘</span>
+                <span>💯 100 分</span>
+                <span>👥 作答 12 次</span>
+              </div>
+            </div>
+            <div class="flex gap-2 items-center">
+              <a class="text-xs bg-purple-50 text-purple-600 hover:bg-purple-100 px-3 py-1.5 rounded transition-colors">成績</a>
+              <button class="text-xs bg-blue-50 text-blue-600 hover:bg-blue-100 px-3 py-1.5 rounded transition-colors">編輯</button>
+              <button class="text-xs bg-green-50 text-green-600 hover:bg-green-100 px-3 py-1.5 rounded transition-colors">複製</button>
+              <button class="text-xs bg-yellow-50 text-yellow-600 hover:bg-yellow-100 px-3 py-1.5 rounded transition-colors">AI批改</button>
+              <button class="text-xs bg-red-50 text-red-600 hover:bg-red-100 px-3 py-1.5 rounded transition-colors">刪除</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Exam Card 2 - Active with access code -->
+        <div class="bg-white rounded-xl shadow p-5">
+          <div class="flex items-start justify-between">
+            <div>
+              <div class="flex items-center gap-2 mb-1">
+                <span class="bg-green-100 text-green-700 text-xs font-bold px-2 py-0.5 rounded-full">進行中</span>
+                <span class="bg-yellow-100 text-yellow-700 text-xs px-2 py-0.5 rounded-full">🔒 存取碼</span>
+              </div>
+              <h3 class="font-bold text-gray-800 text-lg">自然科學基礎能力測驗</h3>
+              <div class="flex gap-4 mt-1.5 text-sm text-gray-500">
+                <span>📋 30 題</span>
+                <span>⏱ 60 分鐘</span>
+                <span>💯 150 分</span>
+                <span>👥 作答 5 次</span>
+              </div>
+            </div>
+            <div class="flex gap-2 items-center">
+              <a class="text-xs bg-purple-50 text-purple-600 px-3 py-1.5 rounded">成績</a>
+              <button class="text-xs bg-blue-50 text-blue-600 px-3 py-1.5 rounded">編輯</button>
+              <button class="text-xs bg-green-50 text-green-600 px-3 py-1.5 rounded">複製</button>
+              <button class="text-xs bg-yellow-50 text-yellow-600 px-3 py-1.5 rounded">AI批改</button>
+              <button class="text-xs bg-red-50 text-red-600 px-3 py-1.5 rounded">刪除</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Exam Card 3 - Draft -->
+        <div class="bg-white rounded-xl shadow p-5 border-l-4 border-gray-300">
+          <div class="flex items-start justify-between">
+            <div>
+              <div class="flex items-center gap-2 mb-1">
+                <span class="bg-gray-100 text-gray-600 text-xs font-bold px-2 py-0.5 rounded-full">草稿</span>
+              </div>
+              <h3 class="font-bold text-gray-600 text-lg">國語文閱讀理解測驗（草稿）</h3>
+              <div class="flex gap-4 mt-1.5 text-sm text-gray-400">
+                <span>📋 15 題</span>
+                <span>⏱ 30 分鐘</span>
+                <span>💯 75 分</span>
+              </div>
+            </div>
+            <div class="flex gap-2 items-center">
+              <button class="text-xs bg-blue-50 text-blue-600 px-3 py-1.5 rounded">編輯</button>
+              <button class="text-xs bg-green-50 text-green-600 px-3 py-1.5 rounded">複製</button>
+              <button class="text-xs bg-red-50 text-red-600 px-3 py-1.5 rounded">刪除</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

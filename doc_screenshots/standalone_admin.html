@@ -1,0 +1,127 @@
+<!DOCTYPE html><html lang="zh-TW"><head><meta charset="UTF-8"><title>管理後台 - 題庫管理</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Microsoft JhengHei','微軟正黑體',sans-serif;background:#f1f5f9;display:flex;min-height:100vh}
+.sidebar{width:220px;background:linear-gradient(180deg,#1e3a8a,#1e1b4b);color:#fff;flex-shrink:0;padding:0}
+.sidebar-logo{padding:20px 16px;border-bottom:1px solid rgba(255,255,255,.1);font-size:16px;font-weight:800}
+.sidebar-logo p{font-size:11px;color:#93c5fd;margin-top:2px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:12px 16px;font-size:14px;color:#bfdbfe;cursor:pointer;border-left:3px solid transparent}
+.nav-item.active{background:rgba(255,255,255,.15);border-left-color:#60a5fa;color:#fff}
+.nav-item:hover{background:rgba(255,255,255,.08)}
+.content{flex:1;overflow:auto}
+header{background:#fff;border-bottom:1px solid #e2e8f0;padding:14px 24px;display:flex;align-items:center;justify-content:space-between}
+header h1{font-size:16px;font-weight:700;color:#0f172a}
+.toolbar{padding:16px 24px;background:#fff;border-bottom:1px solid #e2e8f0;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.toolbar select,.toolbar input{padding:7px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;font-family:inherit;color:#374151;outline:none}
+.btn{padding:7px 16px;border:none;border-radius:8px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer}
+.btn-primary{background:#4f46e5;color:#fff}
+.btn-success{background:#059669;color:#fff}
+.btn-warning{background:#d97706;color:#fff}
+.btn-danger{background:#dc2626;color:#fff}
+.btn-gray{background:#e2e8f0;color:#374151}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:#f8fafc;text-align:left;padding:10px 16px;font-size:12px;font-weight:700;color:#64748b;border-bottom:1px solid #e2e8f0}
+td{padding:11px 16px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+tr:hover td{background:#f8fafc}
+.badge{padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700}
+.badge-choice{background:#dbeafe;color:#1e40af}
+.badge-fill{background:#dcfce7;color:#166534}
+.badge-calc{background:#fef3c7;color:#92400e}
+.badge-writing{background:#fae8ff;color:#7e22ce}
+.diff{display:inline-block;width:10px;height:10px;border-radius:50%;background:#22c55e;margin-right:4px}
+.diff2{background:#eab308}.diff3{background:#f97316}.diff4{background:#ef4444}.diff5{background:#991b1b}
+.main-body{padding:0 24px 24px}
+</style></head>
+<body>
+<div class="sidebar">
+  <div class="sidebar-logo">🎓 FN-EXAM<p>管理後台</p></div>
+  <div class="nav-item active">📋 題庫管理</div>
+  <div class="nav-item">📝 考卷管理</div>
+  <div class="nav-item">📊 成績報表</div>
+  <div class="nav-item">✏️ 人工批改</div>
+  <div class="nav-item">🤖 AI 出題</div>
+  <div class="nav-item">👥 帳號管理</div>
+  <div class="nav-item" style="margin-top:auto">⚙️ 系統設定</div>
+</div>
+<div class="content">
+  <header>
+    <h1>📋 題庫管理</h1>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-success">＋ 新增題目</button>
+      <button class="btn btn-warning">🤖 AI 批次出題</button>
+      <button class="btn btn-gray">📥 匯入 CSV</button>
+    </div>
+  </header>
+  <div class="toolbar">
+    <select><option>全部科目</option><option>數學</option><option>理化</option><option>英文</option></select>
+    <select><option>全部類型</option><option>單選題</option><option>填空題</option><option>計算題</option><option>寫作題</option></select>
+    <select><option>全部難度</option><option>⭐ 難度 1</option><option>⭐⭐ 難度 2</option><option>⭐⭐⭐ 難度 3</option></select>
+    <input type="text" placeholder="🔍 搜尋題目關鍵字..." style="width:200px">
+    <span style="color:#64748b;font-size:13px;margin-left:auto">共 482 題</span>
+  </div>
+  <div class="main-body">
+  <table>
+    <thead><tr>
+      <th style="width:40px"><input type="checkbox"></th>
+      <th>題目內容</th>
+      <th>科目</th>
+      <th>類型</th>
+      <th>難度</th>
+      <th>操作</th>
+    </tr></thead>
+    <tbody>
+      <tr>
+        <td><input type="checkbox"></td>
+        <td style="max-width:300px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">一個等差數列的第 3 項為 11，第 7 項為 27，求公差 d 及首項 a₁</td>
+        <td>數學</td>
+        <td><span class="badge badge-choice">單選題</span></td>
+        <td><span class="diff diff3"></span>3</td>
+        <td><button class="btn btn-primary" style="padding:4px 10px;font-size:12px">編輯</button> <button class="btn btn-danger" style="padding:4px 10px;font-size:12px">刪除</button></td>
+      </tr>
+      <tr>
+        <td><input type="checkbox"></td>
+        <td style="max-width:300px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">計算 3x + 5 = 17，x 的值為何？</td>
+        <td>數學</td>
+        <td><span class="badge badge-fill">填空題</span></td>
+        <td><span class="diff diff2"></span>2</td>
+        <td><button class="btn btn-primary" style="padding:4px 10px;font-size:12px">編輯</button> <button class="btn btn-danger" style="padding:4px 10px;font-size:12px">刪除</button></td>
+      </tr>
+      <tr>
+        <td><input type="checkbox"></td>
+        <td style="max-width:300px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">某物體從靜止開始做加速度為 3 m/s² 的直線運動，求 5 秒後的速度與位移</td>
+        <td>理化</td>
+        <td><span class="badge badge-calc">計算題</span></td>
+        <td><span class="diff diff4"></span>4</td>
+        <td><button class="btn btn-primary" style="padding:4px 10px;font-size:12px">編輯</button> <button class="btn btn-danger" style="padding:4px 10px;font-size:12px">刪除</button></td>
+      </tr>
+      <tr>
+        <td><input type="checkbox"></td>
+        <td style="max-width:300px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">請描述你最喜歡的學習方式，並舉例說明。（200 字以上）</td>
+        <td>英文</td>
+        <td><span class="badge badge-writing">寫作題</span></td>
+        <td><span class="diff diff3"></span>3</td>
+        <td><button class="btn btn-primary" style="padding:4px 10px;font-size:12px">編輯</button> <button class="btn btn-danger" style="padding:4px 10px;font-size:12px">刪除</button></td>
+      </tr>
+      <tr>
+        <td><input type="checkbox"></td>
+        <td style="max-width:300px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">What is the past tense of "go"? A. goed B. gone C. went D. going</td>
+        <td>英文</td>
+        <td><span class="badge badge-choice">單選題</span></td>
+        <td><span class="diff"></span>1</td>
+        <td><button class="btn btn-primary" style="padding:4px 10px;font-size:12px">編輯</button> <button class="btn btn-danger" style="padding:4px 10px;font-size:12px">刪除</button></td>
+      </tr>
+    </tbody>
+  </table>
+  <div style="padding:16px;display:flex;align-items:center;justify-content:space-between;font-size:13px;color:#64748b">
+    <span>顯示 1-10 / 482 筆</span>
+    <div style="display:flex;gap:6px">
+      <button class="btn btn-gray" style="padding:4px 12px">◀</button>
+      <button class="btn btn-primary" style="padding:4px 12px">1</button>
+      <button class="btn btn-gray" style="padding:4px 12px">2</button>
+      <button class="btn btn-gray" style="padding:4px 12px">3</button>
+      <button class="btn btn-gray" style="padding:4px 12px">▶</button>
+    </div>
+  </div>
+  </div>
+</div>
+</body></html>

@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>考試列表 - FN-EXAM</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: 'Microsoft JhengHei', sans-serif; background: #F1F5F9; }
+  .exam-card { transition: transform 0.2s, box-shadow 0.2s; }
+  .exam-card:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,.12); }
+</style>
+</head>
+<body class="min-h-screen">
+  <!-- Header -->
+  <header class="bg-gradient-to-r from-blue-600 to-indigo-700 text-white shadow-lg">
+    <div class="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
+      <div>
+        <h1 class="text-xl font-bold">📚 FN-EXAM 考試系統</h1>
+        <p class="text-blue-200 text-sm mt-0.5">歡迎，王小明 同學</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="bg-blue-500 px-3 py-1 rounded-full text-sm">🎒 學生</span>
+        <button class="text-blue-200 hover:text-white text-sm">登出</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-4xl mx-auto px-4 py-8">
+    <h2 class="text-2xl font-bold text-gray-800 mb-2">可參加的考試</h2>
+    <p class="text-gray-500 mb-6">以下為目前開放中的試卷，請選擇考試開始作答。</p>
+
+    <div class="grid gap-4">
+      <!-- Exam Card 1 -->
+      <div class="exam-card bg-white rounded-xl shadow p-5 flex items-center justify-between">
+        <div class="flex-1">
+          <div class="flex items-center gap-3 mb-2">
+            <span class="bg-green-100 text-green-700 text-xs font-bold px-2 py-0.5 rounded-full">進行中</span>
+            <span class="text-xs text-gray-400">升國中資優班</span>
+          </div>
+          <h3 class="text-lg font-bold text-gray-800">2026 年度數學入學測驗（模擬卷 A）</h3>
+          <div class="flex gap-4 mt-2 text-sm text-gray-500">
+            <span>⏱ 45 分鐘</span>
+            <span>📋 20 題</span>
+            <span>💯 100 分</span>
+            <span>📅 截止：2026-04-30</span>
+          </div>
+        </div>
+        <button class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg font-medium ml-4">開始作答</button>
+      </div>
+
+      <!-- Exam Card 2 -->
+      <div class="exam-card bg-white rounded-xl shadow p-5 flex items-center justify-between">
+        <div class="flex-1">
+          <div class="flex items-center gap-3 mb-2">
+            <span class="bg-green-100 text-green-700 text-xs font-bold px-2 py-0.5 rounded-full">進行中</span>
+            <span class="text-xs text-gray-400">升國中資優班</span>
+          </div>
+          <h3 class="text-lg font-bold text-gray-800">自然科學基礎能力測驗</h3>
+          <div class="flex gap-4 mt-2 text-sm text-gray-500">
+            <span>⏱ 60 分鐘</span>
+            <span>📋 30 題</span>
+            <span>💯 150 分</span>
+            <span>🔒 需存取碼</span>
+          </div>
+        </div>
+        <button class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg font-medium ml-4">開始作答</button>
+      </div>
+
+      <!-- Exam Card 3 -->
+      <div class="exam-card bg-white rounded-xl shadow p-5 flex items-center justify-between">
+        <div class="flex-1">
+          <div class="flex items-center gap-3 mb-2">
+            <span class="bg-green-100 text-green-700 text-xs font-bold px-2 py-0.5 rounded-full">進行中</span>
+            <span class="text-xs text-gray-400">全民英檢初級</span>
+          </div>
+          <h3 class="text-lg font-bold text-gray-800">GEPT 初級英語聽力與閱讀</h3>
+          <div class="flex gap-4 mt-2 text-sm text-gray-500">
+            <span>⏱ 30 分鐘</span>
+            <span>📋 15 題</span>
+            <span>💯 75 分</span>
+          </div>
+        </div>
+        <button class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg font-medium ml-4">開始作答</button>
+      </div>
+    </div>
+
+    <!-- History -->
+    <div class="mt-8 bg-white rounded-xl shadow p-5">
+      <h3 class="font-bold text-gray-700 mb-3">📊 我的作答紀錄</h3>
+      <table class="w-full text-sm text-gray-600">
+        <thead><tr class="text-left border-b text-gray-400">
+          <th class="pb-2">試卷名稱</th><th class="pb-2">提交時間</th><th class="pb-2">得分</th><th class="pb-2">操作</th>
+        </tr></thead>
+        <tbody>
+          <tr class="border-b"><td class="py-2">數學入學測驗（練習卷）</td><td>2026-03-20 14:35</td><td class="text-green-600 font-bold">88 / 100</td><td><a class="text-blue-500">查看成績</a></td></tr>
+          <tr><td class="py-2">國語文基礎測驗</td><td>2026-03-15 10:12</td><td class="text-yellow-600 font-bold">72 / 100</td><td><a class="text-blue-500">查看成績</a></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+</body>
+</html>

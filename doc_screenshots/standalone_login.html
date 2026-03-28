@@ -1,0 +1,35 @@
+<!DOCTYPE html><html lang="zh-TW"><head><meta charset="UTF-8"><title>FN-EXAM 登入</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Microsoft JhengHei','微軟正黑體',sans-serif;background:linear-gradient(135deg,#1e3a8a 0%,#3730a3 50%,#1e1b4b 100%);min-height:100vh;display:flex;align-items:center;justify-content:center}
+.card{background:#fff;border-radius:16px;box-shadow:0 25px 50px rgba(0,0,0,.3);padding:48px 40px;width:420px;max-width:95vw}
+.logo{text-align:center;margin-bottom:24px}
+.logo h1{font-size:28px;font-weight:800;color:#1e3a8a;letter-spacing:2px}
+.logo p{color:#6b7280;font-size:14px;margin-top:4px}
+.preset-row{display:flex;gap:10px;margin-bottom:20px}
+.preset-btn{flex:1;padding:8px 12px;border:2px solid #e5e7eb;background:#f9fafb;border-radius:8px;font-family:inherit;font-size:13px;color:#374151;cursor:pointer;transition:all .2s}
+.preset-btn:hover{border-color:#6366f1;background:#eef2ff;color:#4338ca}
+label{display:block;font-size:13px;font-weight:600;color:#374151;margin-bottom:6px}
+input{width:100%;padding:10px 14px;border:2px solid #e5e7eb;border-radius:8px;font-size:15px;font-family:inherit;outline:none;margin-bottom:16px;color:#111}
+input:focus{border-color:#6366f1}
+.btn{width:100%;padding:12px;background:linear-gradient(135deg,#4f46e5,#6d28d9);color:#fff;border:none;border-radius:10px;font-size:16px;font-weight:700;font-family:inherit;cursor:pointer;letter-spacing:1px}
+.divider{text-align:center;color:#9ca3af;font-size:12px;margin:12px 0}
+</style></head>
+<body>
+<div class="card">
+  <div class="logo">
+    <h1>🎓 FN-EXAM</h1>
+    <p>升國中數理資優班考題系統</p>
+  </div>
+  <div class="preset-row">
+    <button class="preset-btn">👨‍🏫 老師帳號</button>
+    <button class="preset-btn">🎒 學生帳號</button>
+  </div>
+  <label>帳號</label>
+  <input type="text" value="admin" placeholder="請輸入帳號">
+  <label>密碼</label>
+  <input type="password" value="admin1234" placeholder="請輸入密碼">
+  <button class="btn">🔐 登入系統</button>
+  <div class="divider">© 2026 FN-EXAM 線上考試平台</div>
+</div>
+</body></html>

@@ -229,7 +229,11 @@ async function callGeminiText(systemPrompt, userPrompt) {
     generationConfig: { temperature: 0.7 }
   });
   const result = await withTimeout(model.generateContent(`${systemPrompt}\n\n${userPrompt}`), 'Gemini');
-  return result.response.text();
+  // gemini-2.5-flash 是 thinking model，response 包含 thought parts 和 text parts。
+  // 過濾掉 thought parts，只取實際文字輸出，避免內部推理草稿被拼入範文造成重覆出現。
+  const parts = result.response.candidates?.[0]?.content?.parts || [];
+  const textOnly = parts.filter(p => !p.thought).map(p => p.text || '').join('');
+  return textOnly || result.response.text();
 }
 
 async function callClaudeText(systemPrompt, userPrompt) {

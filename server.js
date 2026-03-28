@@ -2034,6 +2034,45 @@ app.post('/api/exams/:id/submit', submitLimiter, requireStudent, requireStudentA
     try { archiveAndReplace(); } catch (err) { console.error('[QualityReview] archiveAndReplace 失敗:', err); }
   });
 
+  // 非同步自動 AI 批改作文（不阻塞回應）
+  const hasLLM = !!(process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY || process.env.ANTHROPIC_API_KEY);
+  if (hasLLM) {
+    setImmediate(async () => {
+      try {
+        const provider = process.env.LLM_PROVIDER || 'gemini';
+        const pendingWriting = db.prepare(`
+          SELECT ad.id, ad.given_answer, q.content AS q_content, q.answer AS q_answer,
+                 COALESCE(eq.score, 10) AS max_score
+          FROM answer_details ad
+          JOIN questions q ON q.id = ad.question_id
+          LEFT JOIN exam_questions eq ON eq.question_id = ad.question_id AND eq.exam_id = ?
+          WHERE ad.submission_id = ? AND ad.grading_status = 'pending' AND q.type = 'writing'
+        `).all(req.params.id, submissionId.id);
+        if (!pendingWriting.length) return;
+        let aiEarned = 0;
+        for (const ad of pendingWriting) {
+          try {
+            const { score, notes, dim_content, dim_structure, dim_language, dim_norms } =
+              await gradeEssay(provider, ad.q_content, ad.given_answer || '', ad.q_answer || '', ad.max_score);
+            db.prepare(`UPDATE answer_details
+              SET ai_score=?, ai_notes=?, dim_content=?, dim_structure=?, dim_language=?, dim_norms=?,
+                  grading_status='ai_graded', score_earned=?
+              WHERE id=?`)
+              .run(score, notes, dim_content, dim_structure, dim_language, dim_norms, score, ad.id);
+            aiEarned += score;
+          } catch (e) {
+            console.error(`[AutoGrade] 批改 answer_details id=${ad.id} 失敗:`, e.message);
+          }
+        }
+        if (aiEarned > 0) {
+          db.prepare(`UPDATE submissions SET score = score + ? WHERE id = ?`).run(aiEarned, submissionId.id);
+        }
+      } catch (e) {
+        console.error('[AutoGrade] 自動批改流程失敗:', e.message);
+      }
+    });
+  }
+
   res.json({
     submission_id: submissionId.id,
     lookup_token: submissionId.lookup_token,
@@ -2305,7 +2344,8 @@ app.get('/api/exams/:id/pending-grading', requireAdmin, (req, res) => {
            ad.rubric_score, ad.reviewer_notes, ad.audio_answer_url,
            ad.ai_score, ad.ai_notes,
            ad.dim_content, ad.dim_structure, ad.dim_language, ad.dim_norms,
-           q.content, q.type, q.answer, q.explanation, q.model_essay, eq.score as max_score,
+           ad.model_essay,
+           q.content, q.type, q.answer, q.explanation, eq.score as max_score,
            s.student_name, s.student_id, s.submitted_at
     FROM answer_details ad
     JOIN questions q ON q.id = ad.question_id
@@ -2371,15 +2411,21 @@ app.post('/api/answer-details/:id/ai-grade', requireAdmin, async (req, res) => {
   }
 });
 
-// POST AI generate model essay for a question
+// POST AI generate model essay — stored per answer_detail (not per question) to avoid overwriting
 app.post('/api/questions/:id/model-essay', requireAdmin, async (req, res) => {
   const q = db.prepare('SELECT * FROM questions WHERE id = ?').get(req.params.id);
   if (!q) return res.status(404).json({ error: '找不到題目' });
   const validProviders = ['openai', 'gemini', 'claude'];
   const provider = validProviders.includes(req.body?.provider) ? req.body.provider : (process.env.LLM_PROVIDER || 'gemini');
+  const detailId = req.body?.detailId ? parseInt(req.body.detailId) : null;
   try {
     const essay = await generateModelEssay(provider, q.content, q.grade_level || 'grade_7');
-    db.prepare('UPDATE questions SET model_essay=? WHERE id=?').run(essay, req.params.id);
+    if (detailId) {
+      db.prepare('UPDATE answer_details SET model_essay=? WHERE id=?').run(essay, detailId);
+    } else {
+      // fallback: still update questions for backward compat
+      db.prepare('UPDATE questions SET model_essay=? WHERE id=?').run(essay, req.params.id);
+    }
     res.json({ success: true, model_essay: essay });
   } catch (e) {
     res.status(500).json({ error: 'AI 範文產生失敗：' + e.message });

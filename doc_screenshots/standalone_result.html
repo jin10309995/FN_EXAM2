@@ -1,0 +1,99 @@
+<!DOCTYPE html><html lang="zh-TW"><head><meta charset="UTF-8"><title>成績報告 - FN-EXAM</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Microsoft JhengHei','微軟正黑體',sans-serif;background:#f1f5f9;min-height:100vh}
+header{background:linear-gradient(135deg,#1e40af,#4338ca);color:#fff;padding:16px 24px;display:flex;align-items:center;justify-content:space-between}
+header h1{font-size:17px;font-weight:800}
+main{max-width:860px;margin:32px auto;padding:0 16px}
+.summary{background:#fff;border-radius:16px;box-shadow:0 2px 16px rgba(0,0,0,.08);padding:32px;margin-bottom:20px;text-align:center}
+.summary h2{font-size:18px;font-weight:700;color:#1e293b;margin-bottom:4px}
+.summary .sub{color:#94a3b8;font-size:13px;margin-bottom:24px}
+.score{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:20px}
+.score .num{font-size:72px;font-weight:900;color:#22c55e;line-height:1}
+.score .info .grade{background:#dcfce7;color:#166534;font-size:13px;font-weight:700;padding:3px 12px;border-radius:20px;display:inline-block;margin-top:4px}
+.stats{display:flex;justify-content:center;gap:32px;margin-top:8px}
+.stat{text-align:center}
+.stat .n{font-size:24px;font-weight:800}
+.stat .l{font-size:12px;color:#94a3b8;margin-top:2px}
+.action-btns{display:flex;gap:10px;justify-content:center;margin:20px 0}
+.btn{padding:10px 24px;border:none;border-radius:10px;font-size:14px;font-weight:700;font-family:inherit;cursor:pointer}
+.detail-card{background:#fff;border-radius:14px;box-shadow:0 2px 12px rgba(0,0,0,.07);padding:20px}
+.detail-card h3{font-size:14px;font-weight:700;color:#0f172a;margin-bottom:14px}
+.answer-row{display:flex;align-items:flex-start;gap:12px;padding:12px;border-radius:10px;margin-bottom:8px}
+.answer-row.correct{background:#f0fdf4;border:1px solid #bbf7d0}
+.answer-row.wrong{background:#fff1f2;border:1px solid #fecdd3}
+.check{font-size:18px;font-weight:900;margin-top:1px;flex-shrink:0}
+.ans-body .q{font-size:14px;font-weight:600;color:#0f172a;margin-bottom:4px}
+.ans-body .a{font-size:13px;color:#64748b}
+.ans-body .explanation{font-size:12px;color:#94a3b8;margin-top:4px;padding:6px 10px;background:#f8fafc;border-radius:6px}
+</style></head>
+<body>
+<header>
+  <h1>📊 成績報告</h1>
+  <a href="#" style="color:#bfdbfe;font-size:13px;text-decoration:none">← 返回考試列表</a>
+</header>
+<main>
+  <div class="summary">
+    <h2>2026 年度數學入學測驗（模擬卷 A）</h2>
+    <div class="sub">學生：王小明 ｜ 提交時間：2026-03-26 14:35</div>
+    <div class="score">
+      <div class="num">88</div>
+      <div class="info">
+        <div style="color:#94a3b8;font-size:14px">/ 100 分</div>
+        <div class="grade">優秀 88%</div>
+      </div>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="n" style="color:#4f46e5">17</div><div class="l">答對</div></div>
+      <div class="stat"><div class="n" style="color:#ef4444">3</div><div class="l">答錯</div></div>
+      <div class="stat"><div class="n" style="color:#94a3b8">0</div><div class="l">未作答</div></div>
+      <div class="stat"><div class="n" style="color:#0f172a">20</div><div class="l">共題數</div></div>
+    </div>
+  </div>
+  <div class="action-btns">
+    <button class="btn" style="background:#4f46e5;color:#fff">📊 查看答題分析</button>
+    <button class="btn" style="background:#0f172a;color:#fff">📄 下載 PDF 報告</button>
+    <button class="btn" style="background:#e2e8f0;color:#374151">← 返回列表</button>
+  </div>
+  <div class="detail-card">
+    <h3>作答明細</h3>
+    <div class="answer-row correct">
+      <div class="check" style="color:#22c55e">✓</div>
+      <div class="ans-body">
+        <div class="q">1. 一個等差數列的第 3 項為 11，第 7 項為 27，求公差 d 及首項 a₁</div>
+        <div class="a">你的答案：<strong style="color:#4f46e5">B. d = 4，a₁ = 3</strong> ｜ 正確答案：B ｜ 得分：5/5</div>
+      </div>
+    </div>
+    <div class="answer-row wrong">
+      <div class="check" style="color:#ef4444">✗</div>
+      <div class="ans-body">
+        <div class="q">3. 計算 3x + 5 = 17，x 的值為何？</div>
+        <div class="a">你的答案：<strong style="color:#ef4444">5</strong> ｜ 正確答案：4 ｜ 得分：0/5</div>
+        <div class="explanation">📖 解析：3x = 17 - 5 = 12，x = 12/3 = 4</div>
+      </div>
+    </div>
+    <div class="answer-row correct">
+      <div class="check" style="color:#22c55e">✓</div>
+      <div class="ans-body">
+        <div class="q">4. 下列哪個選項是一次函數 f(x) = 2x + 3 的斜率？</div>
+        <div class="a">你的答案：<strong style="color:#4f46e5">A. 2</strong> ｜ 正確答案：A ｜ 得分：5/5</div>
+      </div>
+    </div>
+    <div class="answer-row correct">
+      <div class="check" style="color:#22c55e">✓</div>
+      <div class="ans-body">
+        <div class="q">5. 下列敘述何者正確？</div>
+        <div class="a">你的答案：<strong style="color:#4f46e5">C. 兩個負數的乘積為正數</strong> ｜ 正確答案：C ｜ 得分：5/5</div>
+      </div>
+    </div>
+    <div class="answer-row wrong">
+      <div class="check" style="color:#ef4444">✗</div>
+      <div class="ans-body">
+        <div class="q">8. 若 f(x) = x² - 4x + 3，求 f(x) = 0 的解</div>
+        <div class="a">你的答案：<strong style="color:#ef4444">x = 1 或 x = 4</strong> ｜ 正確答案：x = 1 或 x = 3 ｜ 得分：0/5</div>
+        <div class="explanation">📖 解析：x² - 4x + 3 = (x-1)(x-3) = 0，故 x = 1 或 x = 3</div>
+      </div>
+    </div>
+  </div>
+</main>
+</body></html>

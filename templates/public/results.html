@@ -255,12 +255,6 @@ async function initPage() {
   if (presetToken) {
     document.getElementById('lookup-token').value = presetToken;
     lookupSubmission();
-    return;
-  }
-  const recent = readRecentLookups();
-  if (recent.length && recent[0].lookup_token) {
-    document.getElementById('lookup-token').value = recent[0].lookup_token;
-    lookupSubmission();
   }
 }
 

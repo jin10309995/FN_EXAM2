@@ -224,6 +224,9 @@ if (!cols.includes('grade_level')) {
   if (!adCols.includes('dim_norms')) {
     db.exec(`ALTER TABLE answer_details ADD COLUMN dim_norms INTEGER`);
   }
+  if (!adCols.includes('model_essay')) {
+    db.exec(`ALTER TABLE answer_details ADD COLUMN model_essay TEXT`);
+  }
 }
 
 // Migration: add model_essay to questions

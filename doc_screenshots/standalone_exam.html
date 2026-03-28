@@ -1,0 +1,106 @@
+<!DOCTYPE html><html lang="zh-TW"><head><meta charset="UTF-8"><title>作答介面 - FN-EXAM</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Microsoft JhengHei','微軟正黑體',sans-serif;background:#f1f5f9}
+header{background:linear-gradient(135deg,#1e40af,#4338ca);color:#fff;padding:12px 20px;display:flex;align-items:center;justify-content:space-between}
+header h2{font-size:15px;font-weight:700}
+.timer{background:rgba(255,255,255,.2);padding:6px 16px;border-radius:8px;font-size:15px;font-weight:800;font-variant-numeric:tabular-nums}
+.layout{display:flex;gap:0;height:calc(100vh - 50px)}
+.sidebar{width:200px;background:#fff;border-right:1px solid #e2e8f0;padding:16px;overflow-y:auto;flex-shrink:0}
+.sidebar h4{font-size:12px;font-weight:700;color:#64748b;margin-bottom:10px;text-transform:uppercase}
+.q-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.q-num{width:36px;height:36px;display:flex;align-items:center;justify-content:center;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer}
+.q-answered{background:#4f46e5;color:#fff}
+.q-current{background:#7c3aed;color:#fff;ring:2px solid #7c3aed}
+.q-unanswered{background:#f1f5f9;color:#64748b;border:1px solid #e2e8f0}
+.q-bookmarked{background:#fef3c7;color:#92400e;border:1px solid #fcd34d}
+.progress-bar{height:6px;background:#e2e8f0;border-radius:3px;margin:12px 0}
+.progress-fill{height:100%;background:linear-gradient(90deg,#4f46e5,#7c3aed);border-radius:3px;width:55%}
+main{flex:1;padding:24px;overflow-y:auto}
+.q-card{background:#fff;border-radius:14px;box-shadow:0 2px 12px rgba(0,0,0,.07);padding:24px;max-width:700px}
+.q-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.q-title{font-size:13px;font-weight:700;color:#6366f1}
+.q-bookmark{background:#fef3c7;border:1px solid #fcd34d;color:#92400e;padding:4px 12px;border-radius:6px;font-size:12px;font-weight:700}
+.q-body{font-size:16px;font-weight:500;color:#0f172a;line-height:1.7;margin-bottom:20px}
+.choice{display:flex;align-items:center;gap:10px;padding:12px 16px;border:2px solid #e2e8f0;border-radius:10px;margin-bottom:8px;cursor:pointer}
+.choice.selected{border-color:#4f46e5;background:#eef2ff}
+.circle{width:28px;height:28px;border-radius:50%;border:2px solid #cbd5e1;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;flex-shrink:0}
+.choice.selected .circle{background:#4f46e5;border-color:#4f46e5;color:#fff}
+.nav-btns{display:flex;gap:10px;margin-top:20px}
+.btn-prev{flex:1;padding:10px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;color:#374151}
+.btn-next{flex:1;padding:10px;background:#4f46e5;color:#fff;border:none;border-radius:8px;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer}
+.btn-submit{padding:10px 20px;background:#dc2626;color:#fff;border:none;border-radius:8px;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer}
+</style></head>
+<body>
+<header>
+  <h2>📝 2026 年度數學入學測驗（模擬卷 A）</h2>
+  <div style="display:flex;gap:12px;align-items:center">
+    <span style="font-size:13px;color:#bfdbfe">第 11 題 / 共 20 題</span>
+    <div class="timer">⏱ 42:18</div>
+  </div>
+</header>
+<div class="layout">
+  <div class="sidebar">
+    <h4>作答進度</h4>
+    <div class="progress-bar"><div class="progress-fill"></div></div>
+    <div style="font-size:12px;color:#64748b;margin-bottom:12px">已作答 11/20 題（55%）</div>
+    <div class="q-grid">
+      <div class="q-num q-answered">1</div>
+      <div class="q-num q-answered">2</div>
+      <div class="q-num q-answered">3</div>
+      <div class="q-num q-answered">4</div>
+      <div class="q-num q-answered">5</div>
+      <div class="q-num q-bookmarked">6</div>
+      <div class="q-num q-answered">7</div>
+      <div class="q-num q-answered">8</div>
+      <div class="q-num q-answered">9</div>
+      <div class="q-num q-answered">10</div>
+      <div class="q-num q-current">11</div>
+      <div class="q-num q-unanswered">12</div>
+      <div class="q-num q-unanswered">13</div>
+      <div class="q-num q-unanswered">14</div>
+      <div class="q-num q-unanswered">15</div>
+      <div class="q-num q-unanswered">16</div>
+      <div class="q-num q-unanswered">17</div>
+      <div class="q-num q-unanswered">18</div>
+      <div class="q-num q-unanswered">19</div>
+      <div class="q-num q-unanswered">20</div>
+    </div>
+    <div style="margin-top:16px;font-size:11px;color:#94a3b8;line-height:1.8">
+      <span style="display:inline-block;width:10px;height:10px;background:#4f46e5;border-radius:2px;margin-right:4px"></span>已作答<br>
+      <span style="display:inline-block;width:10px;height:10px;background:#7c3aed;border-radius:2px;margin-right:4px"></span>目前題目<br>
+      <span style="display:inline-block;width:10px;height:10px;background:#fef3c7;border:1px solid #fcd34d;border-radius:2px;margin-right:4px"></span>書籤
+    </div>
+  </div>
+  <main>
+    <div class="q-card">
+      <div class="q-header">
+        <span class="q-title">📐 數學 ｜ 選擇題 ｜ 5 分</span>
+        <button class="q-bookmark">🔖 加入書籤</button>
+      </div>
+      <div class="q-body">11. 一個等差數列的第 3 項為 11，第 7 項為 27，試求公差 d 及首項 a₁ 各為多少？</div>
+      <div class="choice">
+        <div class="circle">A</div>
+        <span>d = 3，a₁ = 2</span>
+      </div>
+      <div class="choice selected">
+        <div class="circle">B</div>
+        <span>d = 4，a₁ = 3</span>
+      </div>
+      <div class="choice">
+        <div class="circle">C</div>
+        <span>d = 4，a₁ = 2</span>
+      </div>
+      <div class="choice">
+        <div class="circle">D</div>
+        <span>d = 3，a₁ = 5</span>
+      </div>
+      <div class="nav-btns">
+        <button class="btn-prev">← 上一題</button>
+        <button class="btn-next">下一題 →</button>
+        <button class="btn-submit">📤 交卷</button>
+      </div>
+    </div>
+  </main>
+</div>
+</body></html>

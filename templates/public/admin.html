@@ -1666,14 +1666,14 @@ async function loadPendingGrading() {
       const audioHtml = r.audio_answer_url
         ? `<div class="mt-2"><audio controls class="w-full" src="${escHtml(r.audio_answer_url)}"></audio></div>`
         : '';
-      // AI 建議區塊（若已有 ai_score 則展開顯示）
-      const aiDimHtml = r.ai_score != null ? `
+      // AI 建議區塊（永遠渲染四維度格子，初次批改前顯示 —，避免 aiGrade() 找不到 .grid 元素）
+      const aiDimHtml = `
         <div class="grid grid-cols-4 gap-2 mt-2 text-xs text-center">
           <div class="bg-white rounded border px-2 py-1"><div class="text-gray-500">內容主題</div><div class="font-bold text-indigo-700">${r.dim_content ?? '—'}<span class="font-normal text-gray-400">/40</span></div></div>
           <div class="bg-white rounded border px-2 py-1"><div class="text-gray-500">結構邏輯</div><div class="font-bold text-indigo-700">${r.dim_structure ?? '—'}<span class="font-normal text-gray-400">/25</span></div></div>
           <div class="bg-white rounded border px-2 py-1"><div class="text-gray-500">語言表達</div><div class="font-bold text-indigo-700">${r.dim_language ?? '—'}<span class="font-normal text-gray-400">/25</span></div></div>
           <div class="bg-white rounded border px-2 py-1"><div class="text-gray-500">書寫規範</div><div class="font-bold text-indigo-700">${r.dim_norms ?? '—'}<span class="font-normal text-gray-400">/10</span></div></div>
-        </div>` : '';
+        </div>`;
       const aiHtml = `
         <div id="ai-suggestion-${r.id}" class="${r.ai_score != null ? '' : 'hidden'} mt-3 bg-yellow-50 border border-yellow-300 rounded-lg p-3 text-sm"
           data-ai-score="${r.ai_score ?? ''}" data-ai-notes="${escHtml(r.ai_notes || '')}"
@@ -1925,7 +1925,7 @@ async function genModelEssay(questionId, detailId) {
   const res = await adminFetch(`/api/questions/${questionId}/model-essay`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ provider })
+    body: JSON.stringify({ provider, detailId })
   });
   const j = await res.json();
   btn.disabled = false; btn.textContent = '📝 重新產生範文';
@@ -2221,7 +2221,7 @@ async function loadExams() {
         </div>
       </div>
       <div class="flex gap-2">
-        <a href="/results.html?exam_id=${e.id}" class="text-xs bg-purple-50 text-purple-600 hover:bg-purple-100 px-3 py-1.5 rounded transition-colors">成績</a>
+        <button onclick="goToStats(${e.id})" class="text-xs bg-purple-50 text-purple-600 hover:bg-purple-100 px-3 py-1.5 rounded transition-colors">成績</button>
         <button onclick="editExam(${e.id})" class="text-xs bg-blue-50 text-blue-600 hover:bg-blue-100 px-3 py-1.5 rounded transition-colors">編輯</button>
         <button onclick="cloneExam(${e.id})" class="text-xs bg-green-50 text-green-600 hover:bg-green-100 px-3 py-1.5 rounded transition-colors">複製</button>
         <button onclick="batchAiGrade(${e.id})" class="text-xs bg-yellow-50 text-yellow-600 hover:bg-yellow-100 px-3 py-1.5 rounded transition-colors">AI批改</button>
@@ -2426,6 +2426,15 @@ async function loadStatsExamList() {
   const exams = await res.json();
   const sel = document.getElementById('stats-exam-select');
   sel.innerHTML = '<option value="">選擇試卷</option>' + exams.map(e => `<option value="${e.id}">${e.title}</option>`).join('');
+}
+
+async function goToStats(examId) {
+  const btn = document.querySelector('.tab-btn[onclick*="stats"]');
+  switchTab('stats', btn);
+  await loadStatsExamList();
+  const sel = document.getElementById('stats-exam-select');
+  sel.value = examId;
+  await loadStats();
 }
 
 async function loadStats() {

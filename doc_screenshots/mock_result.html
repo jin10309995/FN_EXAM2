@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>考試成績 - FN-EXAM</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>body { font-family: 'Microsoft JhengHei', sans-serif; }</style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+  <header class="bg-gradient-to-r from-blue-600 to-indigo-700 text-white px-6 py-4 shadow-lg">
+    <div class="max-w-3xl mx-auto flex items-center justify-between">
+      <h1 class="text-lg font-bold">📊 成績報告</h1>
+      <a href="#" class="text-blue-200 hover:text-white text-sm">← 返回考試列表</a>
+    </div>
+  </header>
+
+  <main class="max-w-3xl mx-auto px-4 py-8">
+    <!-- Score summary -->
+    <div class="bg-white rounded-2xl shadow-lg p-8 mb-6 text-center">
+      <h2 class="text-xl font-bold text-gray-700 mb-2">2026 年度數學入學測驗（模擬卷 A）</h2>
+      <p class="text-gray-400 text-sm mb-6">學生：王小明 ｜ 提交時間：2026-03-26 14:35</p>
+      <div class="flex items-center justify-center gap-2 mb-2">
+        <span class="text-7xl font-bold text-green-500">88</span>
+        <div class="text-left">
+          <div class="text-gray-400 text-sm">/ 100 分</div>
+          <div class="bg-green-100 text-green-700 text-sm font-bold px-3 py-0.5 rounded-full mt-1">優秀 88%</div>
+        </div>
+      </div>
+      <div class="flex justify-center gap-8 mt-4 text-sm text-gray-500">
+        <div class="text-center"><div class="text-2xl font-bold text-blue-600">17</div><div>答對</div></div>
+        <div class="text-center"><div class="text-2xl font-bold text-red-400">3</div><div>答錯</div></div>
+        <div class="text-center"><div class="text-2xl font-bold text-gray-400">0</div><div>未作答</div></div>
+        <div class="text-center"><div class="text-2xl font-bold text-purple-500">20</div><div>共題數</div></div>
+      </div>
+    </div>
+
+    <!-- Action buttons -->
+    <div class="flex gap-3 justify-center mb-6">
+      <a class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-lg font-medium text-sm cursor-pointer">📊 查看答題分析</a>
+      <a class="bg-gray-600 hover:bg-gray-700 text-white px-6 py-2.5 rounded-lg font-medium text-sm cursor-pointer">📄 下載 PDF 報告</a>
+    </div>
+
+    <!-- Answer details -->
+    <div class="bg-white rounded-xl shadow p-6">
+      <h3 class="font-bold text-gray-800 mb-4">作答明細</h3>
+      <div class="space-y-3">
+        <div class="flex items-start gap-3 p-3 bg-green-50 rounded-lg border border-green-200">
+          <span class="text-green-600 font-bold text-lg mt-0.5">✓</span>
+          <div class="flex-1 text-sm">
+            <div class="font-medium text-gray-800">1. 一個等差數列的第 3 項為 11，第 7 項為 27，求公差 d 及首項 a₁</div>
+            <div class="text-gray-500 mt-1">你的答案：<span class="text-blue-600 font-medium">B. d = 4，a₁ = 3</span> ｜ 正確答案：B ｜ 得分：5/5</div>
+          </div>
+        </div>
+        <div class="flex items-start gap-3 p-3 bg-red-50 rounded-lg border border-red-200">
+          <span class="text-red-400 font-bold text-lg mt-0.5">✗</span>
+          <div class="flex-1 text-sm">
+            <div class="font-medium text-gray-800">3. 計算 3x + 5 = 17，x = ___</div>
+            <div class="text-gray-500 mt-1">你的答案：<span class="text-red-500 font-medium">5</span> ｜ 正確答案：4 ｜ 得分：0/5</div>
+            <div class="text-gray-400 mt-1 text-xs">解析：3x = 17 - 5 = 12，x = 12/3 = 4</div>
+          </div>
+        </div>
+        <div class="flex items-start gap-3 p-3 bg-green-50 rounded-lg border border-green-200">
+          <span class="text-green-600 font-bold text-lg mt-0.5">✓</span>
+          <div class="flex-1 text-sm">
+            <div class="font-medium text-gray-800">4. 下列哪個選項是一次函數 f(x) = 2x + 3 的斜率？</div>
+            <div class="text-gray-500 mt-1">你的答案：<span class="text-blue-600 font-medium">A. 2</span> ｜ 正確答案：A ｜ 得分：5/5</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</body>
+</html>
